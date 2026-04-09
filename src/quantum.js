@@ -1,9 +1,7 @@
-import { QuantumPropertyManager, ensureLoaded } from "quantum-forge/quantum";
+import { QuantumPropertyManager, ensureLoaded, useQuantumForgeBuild } from "quantum-forge/quantum";
 
 export async function initQuantum() {
-  // The default WASM build (d3n12) supports dimension 2 (qubits).
-  // When the qubit variant (d2n20) ships in the npm package,
-  // add: useQuantumForgeBuild("qubit") here for a smaller binary.
+  useQuantumForgeBuild("qubit");
   await ensureLoaded();
 }
 
