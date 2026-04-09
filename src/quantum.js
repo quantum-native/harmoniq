@@ -6,175 +6,187 @@ export async function initQuantum() {
 }
 
 /**
- * Create a stateful quantum engine that evaluates circuits incrementally.
- * Caches the quantum state and advances forward without replaying from scratch.
- * Resets automatically when the circuit changes or the playhead jumps backward.
+ * Create a stateful quantum engine that keeps a single QuantumPropertyManager
+ * alive. Properties are reused via the pool (measure → release → re-acquire)
+ * rather than recreating the manager on each reset.
  */
 export function createQuantumEngine() {
-  let cache = null; // { manager, module, qubits, numQubits, circuitId, step }
+  const manager = new QuantumPropertyManager({ dimension: 2 });
+  const m = manager.getModule();
+
+  let qubits = [];
+  let numQubits = 0;
+  let cachedStep = -1;
   let circuitVersion = 0;
+
+  /** Reset all properties to |0⟩ via measure + release + re-acquire. */
+  function resetProperties(n) {
+    // Release existing properties back to pool
+    if (qubits.length > 0) {
+      const values = m.measure_properties(qubits);
+      for (let i = 0; i < qubits.length; i++) {
+        manager.releaseProperty(qubits[i], values[i]);
+      }
+    }
+
+    // Acquire the right number of fresh |0⟩ properties
+    qubits = [];
+    numQubits = n;
+    for (let i = 0; i < n; i++) {
+      qubits.push(manager.acquireProperty());
+    }
+    cachedStep = -1;
+  }
 
   /** Call when the circuit is edited (gates/qubits changed). */
   function invalidate() {
     circuitVersion++;
-    cache = null;
   }
 
   /**
    * Evaluate the circuit up to the given step.
-   * Uses cached state when possible (forward advancement).
+   * Advances incrementally on forward steps; resets on backward/loop/edit.
    */
   function evaluate(circuit, upToStep) {
     const n = circuit.numQubits || 3;
 
-    // Mixed-state path: measurement gates require full branching, no caching
+    // Mixed-state path: measurement gates require branching
     const measGates = circuit.gates
       .filter((g) => g.type === "M" && g.step <= upToStep)
       .sort((a, b) => a.step - b.step || a.qubit - b.qubit);
 
     if (measGates.length > 0) {
-      cache = null;
       return evaluateMixed(circuit, upToStep, n, measGates);
     }
 
-    // Pure-state path: use incremental evaluation
     return evaluatePureCached(circuit, upToStep, n);
   }
 
-  function evaluatePureCached(circuit, upToStep, n) {
-    // Check if cache is valid for incremental advance
-    const canAdvance =
-      cache &&
-      cache.numQubits === n &&
-      cache.circuitId === circuitVersion &&
-      cache.step <= upToStep;
+  let lastCircuitVersion = -1;
 
-    if (!canAdvance) {
-      // Reset: build fresh state from step 0
-      cache = buildFreshState(n);
-      cache.circuitId = circuitVersion;
-      cache.step = -1; // no gates applied yet
+  function evaluatePureCached(circuit, upToStep, n) {
+    // Check if we can advance incrementally
+    const needsReset =
+      n !== numQubits ||
+      lastCircuitVersion !== circuitVersion ||
+      cachedStep > upToStep;
+
+    if (needsReset) {
+      resetProperties(n);
+      lastCircuitVersion = circuitVersion;
     }
 
-    const { manager, module: m, qubits } = cache;
-
-    // Apply gates from (cache.step + 1) to upToStep
-    for (let step = cache.step + 1; step <= upToStep && step < circuit.steps; step++) {
+    // Apply gates from (cachedStep + 1) to upToStep
+    for (let step = cachedStep + 1; step <= upToStep && step < circuit.steps; step++) {
       const gates = circuit.gates.filter((g) => g.step === step && g.type !== "M");
       for (const gate of gates) applyGate(m, qubits, gate);
     }
-    cache.step = upToStep;
+    cachedStep = upToStep;
 
-    // Read state (non-collapsing)
     return readState(m, qubits, n);
   }
 
-  function buildFreshState(n) {
-    const manager = new QuantumPropertyManager({ dimension: 2 });
-    const module = manager.getModule();
-    const qubits = [];
-    for (let i = 0; i < n; i++) qubits.push(manager.acquireProperty());
-    return { manager, module, qubits, numQubits: n, circuitId: 0, step: -1 };
+  function readState(mod, props, n) {
+    const zRaw = mod.probabilities(props);
+    const zBasis = parseProbabilities(zRaw, n);
+    const stateVector = extractStateVector(mod, props, n);
+
+    for (const q of props) mod.hadamard(q);
+    const xRaw = mod.probabilities(props);
+    const xBasis = parseProbabilities(xRaw, n);
+    for (const q of props) mod.inverse_hadamard(q);
+
+    const measures = computeMeasures(stateVector, zBasis, xBasis, n);
+    return { zBasis, xBasis, stateVector, numQubits: n, measures, isMixed: false };
   }
 
-  function readState(m, qubits, n) {
+  // --- Mixed-state evaluation (measurement gates) ---
+  // Branches use the same manager: reset → replay → read → reset for next branch.
+
+  function evaluateMixed(circuit, upToStep, n, measGates) {
+    const numStates = 1 << n;
+    const numBranches = 1 << measGates.length;
+    let zBasis = new Array(numStates).fill(0);
+    let xBasis = new Array(numStates).fill(0);
+    let totalEntanglement = 0;
+    const branches = [];
+
+    for (let combo = 0; combo < numBranches; combo++) {
+      const forced = measGates.map((mg, idx) => ({
+        step: mg.step,
+        qubit: mg.qubit,
+        value: (combo >> (measGates.length - 1 - idx)) & 1,
+      }));
+
+      const result = evaluateBranch(circuit, upToStep, n, forced);
+      if (!result) continue;
+
+      for (let i = 0; i < numStates; i++) {
+        zBasis[i] += result.weight * result.zBasis[i];
+        xBasis[i] += result.weight * result.xBasis[i];
+      }
+
+      totalEntanglement += result.weight * branchEntanglement(result.sv, n);
+      branches.push(result);
+    }
+
+    // Leave state reset for the next pure evaluation to pick up
+    cachedStep = -1;
+    lastCircuitVersion = -1;
+
+    const measures = {
+      entanglement: totalEntanglement,
+      zCorrelation: basisCorrelation(zBasis, n),
+      xCorrelation: basisCorrelation(xBasis, n),
+    };
+
+    return { zBasis, xBasis, stateVector: null, numQubits: n, measures, isMixed: true, branches };
+  }
+
+  function evaluateBranch(circuit, upToStep, n, forcedOutcomes) {
+    const numStates = 1 << n;
+
+    // Reset properties for this branch
+    resetProperties(n);
+
+    let weight = 1.0;
+    let foIdx = 0;
+
+    for (let step = 0; step <= upToStep && step < circuit.steps; step++) {
+      const gates = circuit.gates.filter((g) => g.step === step && g.type !== "M");
+      for (const gate of gates) applyGate(m, qubits, gate);
+
+      while (foIdx < forcedOutcomes.length && forcedOutcomes[foIdx].step === step) {
+        const fo = forcedOutcomes[foIdx];
+
+        const probs = m.probabilities(qubits);
+        const parsed = parseProbabilities(probs, n);
+        const bit = 1 << (n - 1 - fo.qubit);
+        let pVal = 0;
+        for (let k = 0; k < numStates; k++) {
+          if (fo.value === 1 ? (k & bit) : !(k & bit)) pVal += parsed[k];
+        }
+        weight *= pVal;
+        if (weight < 1e-15) return null;
+
+        m.forced_measure_properties([qubits[fo.qubit]], [fo.value]);
+        foIdx++;
+      }
+    }
+
     const zRaw = m.probabilities(qubits);
     const zBasis = parseProbabilities(zRaw, n);
-    const stateVector = extractStateVector(m, qubits, n);
+    const sv = extractStateVector(m, qubits, n);
 
     for (const q of qubits) m.hadamard(q);
     const xRaw = m.probabilities(qubits);
     const xBasis = parseProbabilities(xRaw, n);
     for (const q of qubits) m.inverse_hadamard(q);
 
-    const measures = computeMeasures(stateVector, zBasis, xBasis, n);
-    return { zBasis, xBasis, stateVector, numQubits: n, measures, isMixed: false };
+    return { weight, zBasis, xBasis, sv };
   }
 
   return { evaluate, invalidate };
-}
-
-// --- Mixed-state evaluation (measurement gates, always replays from scratch) ---
-
-function evaluateMixed(circuit, upToStep, n, measGates) {
-  const numStates = 1 << n;
-  const numBranches = 1 << measGates.length;
-  let zBasis = new Array(numStates).fill(0);
-  let xBasis = new Array(numStates).fill(0);
-  let totalEntanglement = 0;
-  const branches = [];
-
-  for (let combo = 0; combo < numBranches; combo++) {
-    const forced = measGates.map((mg, idx) => ({
-      step: mg.step,
-      qubit: mg.qubit,
-      value: (combo >> (measGates.length - 1 - idx)) & 1,
-    }));
-
-    const result = evaluateBranch(circuit, upToStep, n, forced);
-    if (!result) continue;
-
-    for (let i = 0; i < numStates; i++) {
-      zBasis[i] += result.weight * result.zBasis[i];
-      xBasis[i] += result.weight * result.xBasis[i];
-    }
-
-    totalEntanglement += result.weight * branchEntanglement(result.sv, n);
-    branches.push(result);
-  }
-
-  const measures = {
-    entanglement: totalEntanglement,
-    zCorrelation: basisCorrelation(zBasis, n),
-    xCorrelation: basisCorrelation(xBasis, n),
-  };
-
-  return { zBasis, xBasis, stateVector: null, numQubits: n, measures, isMixed: true, branches };
-}
-
-function evaluateBranch(circuit, upToStep, n, forcedOutcomes) {
-  const numStates = 1 << n;
-  const manager = new QuantumPropertyManager({ dimension: 2 });
-  const m = manager.getModule();
-
-  const qubits = [];
-  for (let i = 0; i < n; i++) qubits.push(manager.acquireProperty());
-
-  let weight = 1.0;
-  let foIdx = 0;
-
-  for (let step = 0; step <= upToStep && step < circuit.steps; step++) {
-    const gates = circuit.gates.filter((g) => g.step === step && g.type !== "M");
-    for (const gate of gates) applyGate(m, qubits, gate);
-
-    while (foIdx < forcedOutcomes.length && forcedOutcomes[foIdx].step === step) {
-      const fo = forcedOutcomes[foIdx];
-
-      const probs = m.probabilities(qubits);
-      const parsed = parseProbabilities(probs, n);
-      const bit = 1 << (n - 1 - fo.qubit);
-      let pVal = 0;
-      for (let k = 0; k < numStates; k++) {
-        if (fo.value === 1 ? (k & bit) : !(k & bit)) pVal += parsed[k];
-      }
-      weight *= pVal;
-      if (weight < 1e-15) return null;
-
-      m.forced_measure_properties([qubits[fo.qubit]], [fo.value]);
-      foIdx++;
-    }
-  }
-
-  const zRaw = m.probabilities(qubits);
-  const zBasis = parseProbabilities(zRaw, n);
-  const sv = extractStateVector(m, qubits, n);
-
-  for (const q of qubits) m.hadamard(q);
-  const xRaw = m.probabilities(qubits);
-  const xBasis = parseProbabilities(xRaw, n);
-  for (const q of qubits) m.inverse_hadamard(q);
-
-  return { weight, zBasis, xBasis, sv };
 }
 
 // --- Gate application ---
