@@ -6,24 +6,98 @@ export async function initQuantum() {
 }
 
 /**
- * Evaluate a circuit up to a given step.
- * If there are measurement gates, branches into all possible outcomes
- * to produce a proper mixed-state probability distribution.
+ * Create a stateful quantum engine that evaluates circuits incrementally.
+ * Caches the quantum state and advances forward without replaying from scratch.
+ * Resets automatically when the circuit changes or the playhead jumps backward.
  */
-export function evaluateCircuit(circuit, upToStep) {
-  const n = circuit.numQubits || 3;
-  const numStates = 1 << n;
+export function createQuantumEngine() {
+  let cache = null; // { manager, module, qubits, numQubits, circuitId, step }
+  let circuitVersion = 0;
 
-  // Find measurement gates up to current step, sorted by step
-  const measGates = circuit.gates
-    .filter((g) => g.type === "M" && g.step <= upToStep)
-    .sort((a, b) => a.step - b.step || a.qubit - b.qubit);
-
-  if (measGates.length === 0) {
-    return evaluatePure(circuit, upToStep, n);
+  /** Call when the circuit is edited (gates/qubits changed). */
+  function invalidate() {
+    circuitVersion++;
+    cache = null;
   }
 
-  // Mixed-state path: enumerate all outcome combinations
+  /**
+   * Evaluate the circuit up to the given step.
+   * Uses cached state when possible (forward advancement).
+   */
+  function evaluate(circuit, upToStep) {
+    const n = circuit.numQubits || 3;
+
+    // Mixed-state path: measurement gates require full branching, no caching
+    const measGates = circuit.gates
+      .filter((g) => g.type === "M" && g.step <= upToStep)
+      .sort((a, b) => a.step - b.step || a.qubit - b.qubit);
+
+    if (measGates.length > 0) {
+      cache = null;
+      return evaluateMixed(circuit, upToStep, n, measGates);
+    }
+
+    // Pure-state path: use incremental evaluation
+    return evaluatePureCached(circuit, upToStep, n);
+  }
+
+  function evaluatePureCached(circuit, upToStep, n) {
+    // Check if cache is valid for incremental advance
+    const canAdvance =
+      cache &&
+      cache.numQubits === n &&
+      cache.circuitId === circuitVersion &&
+      cache.step <= upToStep;
+
+    if (!canAdvance) {
+      // Reset: build fresh state from step 0
+      cache = buildFreshState(n);
+      cache.circuitId = circuitVersion;
+      cache.step = -1; // no gates applied yet
+    }
+
+    const { manager, module: m, qubits } = cache;
+
+    // Apply gates from (cache.step + 1) to upToStep
+    for (let step = cache.step + 1; step <= upToStep && step < circuit.steps; step++) {
+      const gates = circuit.gates.filter((g) => g.step === step && g.type !== "M");
+      for (const gate of gates) applyGate(m, qubits, gate);
+    }
+    cache.step = upToStep;
+
+    // Read state (non-collapsing)
+    return readState(m, qubits, n);
+  }
+
+  function buildFreshState(n) {
+    const manager = new QuantumPropertyManager({ dimension: 2 });
+    const module = manager.getModule();
+    const qubits = [];
+    for (let i = 0; i < n; i++) qubits.push(manager.acquireProperty());
+    return { manager, module, qubits, numQubits: n, circuitId: 0, step: -1 };
+  }
+
+  function readState(m, qubits, n) {
+    const zRaw = m.probabilities(qubits);
+    const zBasis = parseProbabilities(zRaw, n);
+    const stateVector = extractStateVector(m, qubits, n);
+
+    for (const q of qubits) m.hadamard(q);
+    const xRaw = m.probabilities(qubits);
+    const xBasis = parseProbabilities(xRaw, n);
+    for (const q of qubits) m.inverse_hadamard(q);
+
+    const measures = computeMeasures(stateVector, zBasis, xBasis, n);
+    return { zBasis, xBasis, stateVector, numQubits: n, measures, isMixed: false };
+  }
+
+  return { evaluate, invalidate };
+}
+
+// --- Mixed-state evaluation (measurement gates, always replays from scratch) ---
+
+function evaluateMixed(circuit, upToStep, n, measGates) {
+  const numStates = 1 << n;
   const numBranches = 1 << measGates.length;
   let zBasis = new Array(numStates).fill(0);
   let xBasis = new Array(numStates).fill(0);
@@ -58,38 +132,6 @@ export function evaluateCircuit(circuit, upToStep) {
   return { zBasis, xBasis, stateVector: null, numQubits: n, measures, isMixed: true, branches };
 }
 
-/** Pure-state evaluation (no measurement gates). */
-function evaluatePure(circuit, upToStep, n) {
-  const numStates = 1 << n;
-  const manager = new QuantumPropertyManager({ dimension: 2 });
-  const m = manager.getModule();
-
-  const qubits = [];
-  for (let i = 0; i < n; i++) qubits.push(manager.acquireProperty());
-
-  for (let step = 0; step <= upToStep && step < circuit.steps; step++) {
-    const gates = circuit.gates.filter((g) => g.step === step && g.type !== "M");
-    for (const gate of gates) applyGate(m, qubits, gate);
-  }
-
-  const zRaw = m.probabilities(qubits);
-  const zBasis = parseProbabilities(zRaw, n);
-  const stateVector = extractStateVector(m, qubits, n);
-
-  for (const q of qubits) m.hadamard(q);
-  const xRaw = m.probabilities(qubits);
-  const xBasis = parseProbabilities(xRaw, n);
-  for (const q of qubits) m.inverse_hadamard(q);
-
-  const measures = computeMeasures(stateVector, zBasis, xBasis, n);
-
-  return { zBasis, xBasis, stateVector, numQubits: n, measures, isMixed: false };
-}
-
-/**
- * Evaluate a single branch with specific forced measurement outcomes.
- * Returns { weight, zBasis, xBasis, sv } or null if branch has zero probability.
- */
 function evaluateBranch(circuit, upToStep, n, forcedOutcomes) {
   const numStates = 1 << n;
   const manager = new QuantumPropertyManager({ dimension: 2 });
@@ -102,15 +144,12 @@ function evaluateBranch(circuit, upToStep, n, forcedOutcomes) {
   let foIdx = 0;
 
   for (let step = 0; step <= upToStep && step < circuit.steps; step++) {
-    // Apply unitary gates first
     const gates = circuit.gates.filter((g) => g.step === step && g.type !== "M");
     for (const gate of gates) applyGate(m, qubits, gate);
 
-    // Process forced measurements at this step
     while (foIdx < forcedOutcomes.length && forcedOutcomes[foIdx].step === step) {
       const fo = forcedOutcomes[foIdx];
 
-      // Probability of this outcome
       const probs = m.probabilities(qubits);
       const parsed = parseProbabilities(probs, n);
       const bit = 1 << (n - 1 - fo.qubit);
@@ -138,6 +177,8 @@ function evaluateBranch(circuit, upToStep, n, forcedOutcomes) {
   return { weight, zBasis, xBasis, sv };
 }
 
+// --- Gate application ---
+
 function applyGate(m, qubits, gate) {
   const q = (i) => qubits[i];
   switch (gate.type) {
@@ -164,6 +205,8 @@ function applyGate(m, qubits, gate) {
       break;
   }
 }
+
+// --- Probability / state vector helpers ---
 
 function parseProbabilities(raw, n) {
   const numStates = 1 << n;
@@ -220,7 +263,8 @@ function extractStateVector(m, qubits, n) {
   return sv;
 }
 
-/** Entanglement for a pure-state branch (avg single-qubit von Neumann entropy). */
+// --- Measures ---
+
 function branchEntanglement(sv, n) {
   if (n < 2) return 0;
   const numStates = 1 << n;
@@ -257,7 +301,6 @@ function branchEntanglement(sv, n) {
   return totalEntropy / n;
 }
 
-/** Measures for a pure state (used when no measurement gates). */
 function computeMeasures(sv, zBasis, xBasis, n) {
   if (n < 2) return { entanglement: 0, zCorrelation: 0, xCorrelation: 0 };
   return {
@@ -267,15 +310,6 @@ function computeMeasures(sv, zBasis, xBasis, n) {
   };
 }
 
-/**
- * Average pairwise normalized mutual information in a given basis.
- * I(A;B) = H(A) + H(B) - H(A,B), normalized by min(H(A), H(B)).
- *
- * Unlike Pearson correlation, this correctly handles deterministic states:
- * |00⟩ has NMI = 1 in Z-basis (knowing q0 fully determines q1) because
- * H(A) = H(B) = H(A,B) = 0, and we define 0/0 = 1 when the joint entropy
- * is also 0 (perfect agreement with no uncertainty).
- */
 function basisCorrelation(probs, n) {
   const numStates = 1 << n;
   let totalNMI = 0;
@@ -286,9 +320,7 @@ function basisCorrelation(probs, n) {
       const bitI = 1 << (n - 1 - i);
       const bitJ = 1 << (n - 1 - j);
 
-      // Marginal probabilities
       let pI0 = 0, pI1 = 0, pJ0 = 0, pJ1 = 0;
-      // Joint probabilities: [i=0,j=0], [i=0,j=1], [i=1,j=0], [i=1,j=1]
       let p00 = 0, p01 = 0, p10 = 0, p11 = 0;
 
       for (let k = 0; k < numStates; k++) {
@@ -307,13 +339,10 @@ function basisCorrelation(probs, n) {
       const hJ = shannonH([pJ0, pJ1]);
       const hIJ = shannonH([p00, p01, p10, p11]);
 
-      const mi = hI + hJ - hIJ; // mutual information
+      const mi = hI + hJ - hIJ;
       const minH = Math.min(hI, hJ);
 
       if (minH < 1e-12) {
-        // Both marginals have ~zero entropy: outcomes are deterministic.
-        // If joint entropy is also ~zero, outcomes always agree → NMI = 1.
-        // If one marginal has entropy but the other doesn't, NMI = 0.
         totalNMI += (hIJ < 1e-12) ? 1 : 0;
       } else {
         totalNMI += mi / minH;

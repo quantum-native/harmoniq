@@ -1,4 +1,4 @@
-import { initQuantum, evaluateCircuit } from "./quantum.js";
+import { initQuantum, createQuantumEngine } from "./quantum.js";
 import { createAudioEngine, getNoteNames, getBasisLabels, getKets } from "./audio.js";
 import { createCircuitEditor } from "./circuit.js";
 
@@ -106,6 +106,7 @@ async function main() {
   status.textContent = "Ready";
 
   const audio = createAudioEngine();
+  const engine = createQuantumEngine();
   const editor = createCircuitEditor(circuitCanvas, onCircuitChange);
 
   // Gate palette
@@ -195,6 +196,7 @@ async function main() {
 
   function onCircuitChange() {
     syncQubitCount();
+    engine.invalidate();
     if (playing) updateState();
   }
 
@@ -204,7 +206,7 @@ async function main() {
     editor.setPlayheadPosition(step);
 
     try {
-      const result = evaluateCircuit(circuit, step);
+      const result = engine.evaluate(circuit, step);
       audio.updateProbabilities(result.zBasis, result.xBasis);
       drawViz(result.zBasis, result.xBasis, result.numQubits);
       if (result.isMixed) {
