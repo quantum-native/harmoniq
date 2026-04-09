@@ -1,0 +1,767 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>harmoniq</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0d0d1a;
+    color: #ccc;
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    padding: 24px;
+    height: 100vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  /* Header row */
+  .header {
+    display: flex;
+    align-items: baseline;
+    gap: 16px;
+    flex-shrink: 0;
+  }
+  h1 {
+    font-size: 20px;
+    color: #4fc3f7;
+    letter-spacing: 2px;
+    font-weight: 400;
+  }
+  #status {
+    font-size: 12px;
+    color: #666;
+  }
+
+  /* Main two-column layout */
+  .main-layout {
+    display: flex;
+    gap: 24px;
+    flex: 1;
+    min-height: 0;
+  }
+
+  /* Left column: synth controls */
+  .synth-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    flex: 1;
+    min-width: 0;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: #222 transparent;
+  }
+
+  /* Gate palette */
+  .palette {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    align-items: center;
+    flex-shrink: 0;
+  }
+  .palette-label {
+    font-size: 11px;
+    color: #555;
+    margin-right: 4px;
+  }
+  .gate-btn {
+    background: #1a1a2e;
+    border: 1.5px solid #333;
+    color: #aaa;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: bold;
+    padding: 6px 12px;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: all 0.15s;
+  }
+  .gate-btn:hover { border-color: #555; color: #fff; }
+  .gate-btn.active { border-color: #4fc3f7; color: #4fc3f7; background: #1a2a3e; }
+  .gate-btn[data-gate="H"] { color: #4fc3f7; }
+  .gate-btn[data-gate="X"] { color: #ef5350; }
+  .gate-btn[data-gate="Z"] { color: #ab47bc; }
+  .gate-btn[data-gate="T"] { color: #ffb74d; }
+  .gate-btn[data-gate="CNOT"] { color: #ef5350; }
+  .gate-btn[data-gate="CZ"] { color: #ab47bc; }
+  .gate-btn[data-gate="iSWAP"] { color: #66bb6a; }
+  .gate-btn[data-gate="M"] { color: #78909c; }
+
+  /* Circuit canvas */
+  #circuit-canvas {
+    background: #1a1a2e;
+    border-radius: 6px;
+    cursor: crosshair;
+    flex-shrink: 0;
+  }
+
+  /* Transport */
+  .transport {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-shrink: 0;
+  }
+  .transport button {
+    background: #1a1a2e;
+    border: 1.5px solid #333;
+    color: #ccc;
+    font-family: inherit;
+    font-size: 13px;
+    padding: 6px 16px;
+    cursor: pointer;
+    border-radius: 4px;
+  }
+  .transport button:hover, .presets button:hover { border-color: #4fc3f7; color: #4fc3f7; }
+  .transport label {
+    font-size: 12px;
+    color: #666;
+  }
+  .transport input[type="range"] {
+    width: 120px;
+    accent-color: #4fc3f7;
+  }
+
+  /* State vector display */
+  .statevector {
+    font-size: 12px;
+    line-height: 1.8;
+    color: #999;
+    background: #12121f;
+    border-radius: 6px;
+    padding: 10px 14px;
+    flex-shrink: 0;
+    overflow-wrap: break-word;
+    word-break: break-all;
+  }
+  .statevector .sv-label {
+    color: #555;
+    margin-right: 6px;
+  }
+  .statevector .sv-term {
+    display: inline-block;
+    margin-right: 2px;
+  }
+  .statevector .sv-amp {
+    color: #4fc3f7;
+  }
+  .statevector .sv-phase {
+    color: #ab47bc;
+    font-size: 10px;
+  }
+  .statevector .sv-ket {
+    color: #ccc;
+  }
+  .statevector .sv-plus {
+    color: #555;
+    margin: 0 4px;
+  }
+
+  /* Presets */
+  .presets {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex-shrink: 0;
+  }
+  .preset-btn {
+    background: #1a1a2e;
+    border: 1.5px solid #333;
+    color: #ccc;
+    font-family: inherit;
+    font-size: 12px;
+    padding: 5px 12px;
+    cursor: pointer;
+    border-radius: 4px;
+  }
+
+  /* Sound controls */
+  .sound-controls {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 6px 16px;
+    background: #12121f;
+    border-radius: 6px;
+    padding: 10px 14px;
+    flex-shrink: 0;
+    font-size: 11px;
+  }
+  .sound-controls .ctrl-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .sound-controls label {
+    color: #555;
+    min-width: 60px;
+    text-align: right;
+    flex-shrink: 0;
+  }
+  .sound-controls input[type="range"] {
+    flex: 1;
+    height: 4px;
+    accent-color: #4fc3f7;
+    min-width: 60px;
+  }
+  .sound-controls select {
+    background: #1a1a2e;
+    border: 1px solid #333;
+    color: #ccc;
+    font-family: inherit;
+    font-size: 11px;
+    padding: 3px 6px;
+    border-radius: 3px;
+    flex: 1;
+    min-width: 0;
+  }
+  .sound-controls .ctrl-value {
+    color: #666;
+    min-width: 28px;
+    text-align: left;
+    font-size: 10px;
+  }
+
+  /* Viz */
+  .viz-row {
+    display: flex;
+    gap: 12px;
+    align-items: stretch;
+    flex-shrink: 0;
+  }
+  #viz-canvas, #waveform-canvas {
+    background: #1a1a2e;
+    border-radius: 6px;
+    flex-shrink: 0;
+  }
+
+  /* Measures */
+  .measures {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 14px;
+    background: #12121f;
+    border-radius: 6px;
+    padding: 12px 14px;
+    min-width: 130px;
+  }
+  .measure {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .measure-label {
+    font-size: 10px;
+    color: #555;
+    letter-spacing: 0.5px;
+  }
+  .measure-bar-track {
+    height: 8px;
+    background: #1a1a2e;
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .measure-bar {
+    height: 100%;
+    border-radius: 4px;
+    width: 0%;
+    transition: width 0.15s ease;
+  }
+  .entanglement-bar { background: #ab47bc; }
+  .z-corr-bar { background: #4fc3f7; }
+  .x-corr-bar { background: #ffb74d; }
+  .measure-value {
+    font-size: 12px;
+    color: #999;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .hint {
+    font-size: 11px;
+    color: #444;
+    line-height: 1.5;
+    flex-shrink: 0;
+  }
+
+  /* Right column: explainer */
+  .explainer-panel {
+    flex: 1;
+    min-width: 0;
+    overflow-y: auto;
+    border-left: 1px solid #1a1a2e;
+    padding-left: 24px;
+    scrollbar-width: thin;
+    scrollbar-color: #222 transparent;
+  }
+  .explainer-panel::-webkit-scrollbar { width: 6px; }
+  .explainer-panel::-webkit-scrollbar-track { background: transparent; }
+  .explainer-panel::-webkit-scrollbar-thumb { background: #222; border-radius: 3px; }
+  .explainer-panel::-webkit-scrollbar-thumb:hover { background: #333; }
+
+  .explainer {
+    font-size: 12px;
+    line-height: 1.7;
+    color: #888;
+  }
+  .explainer h2 {
+    font-size: 13px;
+    color: #4fc3f7;
+    font-weight: 500;
+    margin: 20px 0 6px 0;
+    letter-spacing: 1px;
+  }
+  .explainer h2:first-child { margin-top: 0; }
+  .explainer p { margin-bottom: 8px; }
+  .explainer table {
+    border-collapse: collapse;
+    margin: 8px 0 12px 0;
+    font-size: 11px;
+    width: 100%;
+  }
+  .explainer th, .explainer td {
+    padding: 3px 8px 3px 0;
+    text-align: left;
+    border-bottom: 1px solid #151525;
+  }
+  .explainer th { color: #555; font-weight: normal; }
+  .explainer td { color: #999; }
+  .explainer .z-col { color: #4fc3f7; }
+  .explainer .x-col { color: #ffb74d; }
+  .explainer code {
+    background: #151525;
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-size: 11px;
+    color: #bbb;
+  }
+  .explainer .gate-ref {
+    display: inline-block;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-weight: bold;
+    font-size: 10px;
+    border: 1px solid;
+  }
+  .explainer ul {
+    margin: 4px 0 8px 16px;
+    padding: 0;
+  }
+  .explainer li { margin-bottom: 4px; }
+</style>
+</head>
+<body>
+  <div class="header">
+    <h1>harmoniq</h1>
+    <span id="status">Initializing...</span>
+  </div>
+
+  <div class="main-layout">
+    <div class="synth-panel">
+      <div class="palette">
+        <span class="palette-label">gates:</span>
+        <button class="gate-btn active" data-gate="H">H</button>
+        <button class="gate-btn" data-gate="X">X</button>
+        <button class="gate-btn" data-gate="Z">Z</button>
+        <button class="gate-btn" data-gate="T">T</button>
+        <button class="gate-btn" data-gate="CNOT">CNOT</button>
+        <button class="gate-btn" data-gate="CZ">CZ</button>
+        <button class="gate-btn" data-gate="iSWAP">iSWAP</button>
+        <button class="gate-btn" data-gate="M">M</button>
+      </div>
+
+      <canvas id="circuit-canvas"></canvas>
+
+      <div class="transport">
+        <button id="play-btn">play</button>
+        <button id="stop-btn">stop</button>
+        <button id="remove-steps-btn">&minus; step</button>
+        <button id="add-steps-btn">+ step</button>
+        <button id="remove-qubit-btn">&minus; qubit</button>
+        <button id="add-qubit-btn">+ qubit</button>
+        <button id="clear-btn">clear</button>
+        <label>speed: <input id="speed-slider" type="range" min="0.5" max="8" step="0.5" value="2"></label>
+        <span id="speed-label">2 steps/s</span>
+      </div>
+
+      <div class="presets">
+        <span class="palette-label">presets:</span>
+        <button class="preset-btn" data-preset="scale">scale</button>
+        <button class="preset-btn" data-preset="superposition">full superposition</button>
+        <button class="preset-btn" data-preset="ghz">GHZ entangled</button>
+        <button class="preset-btn" data-preset="product">product state</button>
+        <button class="preset-btn" data-preset="classical">classical corr.</button>
+      </div>
+
+      <div class="sound-controls" id="sound-controls">
+        <div class="ctrl-group">
+          <label>Z wave</label>
+          <select id="ctrl-z-wave">
+            <option value="sine">sine</option>
+            <option value="triangle">triangle</option>
+            <option value="square">square</option>
+            <option value="sawtooth">sawtooth</option>
+          </select>
+        </div>
+        <div class="ctrl-group">
+          <label>X wave</label>
+          <select id="ctrl-x-wave">
+            <option value="sine">sine</option>
+            <option value="triangle" selected>triangle</option>
+            <option value="square">square</option>
+            <option value="sawtooth">sawtooth</option>
+          </select>
+        </div>
+        <div class="ctrl-group">
+          <label>scale</label>
+          <select id="ctrl-scale">
+            <option value="C major" selected>C major</option>
+            <option value="C minor">C minor</option>
+            <option value="pentatonic">pentatonic</option>
+            <option value="whole tone">whole tone</option>
+            <option value="chromatic">chromatic</option>
+            <option value="blues">blues</option>
+            <option value="dorian">dorian</option>
+            <option value="phrygian">phrygian</option>
+          </select>
+        </div>
+        <div class="ctrl-group">
+          <label>octave</label>
+          <select id="ctrl-octave">
+            <option value="2">2</option>
+            <option value="3">3</option>
+            <option value="4" selected>4</option>
+            <option value="5">5</option>
+            <option value="6">6</option>
+          </select>
+        </div>
+        <div class="ctrl-group">
+          <label>decay</label>
+          <input type="range" id="ctrl-decay" min="0" max="1" step="0.01" value="0.1">
+          <span class="ctrl-value" id="ctrl-decay-val">10%</span>
+        </div>
+        <div class="ctrl-group">
+          <label>reverb</label>
+          <input type="range" id="ctrl-reverb" min="0" max="1" step="0.01" value="0.2">
+          <span class="ctrl-value" id="ctrl-reverb-val">20%</span>
+        </div>
+        <div class="ctrl-group">
+          <label>Z vol</label>
+          <input type="range" id="ctrl-z-vol" min="0" max="1" step="0.01" value="0.8">
+          <span class="ctrl-value" id="ctrl-z-vol-val">80%</span>
+        </div>
+        <div class="ctrl-group">
+          <label>X vol</label>
+          <input type="range" id="ctrl-x-vol" min="0" max="1" step="0.01" value="0.5">
+          <span class="ctrl-value" id="ctrl-x-vol-val">50%</span>
+        </div>
+        <div class="ctrl-group">
+          <label>master</label>
+          <input type="range" id="ctrl-master" min="0" max="1" step="0.01" value="0.5">
+          <span class="ctrl-value" id="ctrl-master-val">50%</span>
+        </div>
+        <div class="ctrl-group">
+          <label>X octave</label>
+          <select id="ctrl-x-oct-offset">
+            <option value="0">same</option>
+            <option value="1" selected>+1</option>
+            <option value="2">+2</option>
+            <option value="-1">-1</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="viz-row">
+        <canvas id="viz-canvas"></canvas>
+        <div class="measures" id="measures">
+          <div class="measure">
+            <span class="measure-label">entanglement</span>
+            <div class="measure-bar-track"><div class="measure-bar entanglement-bar" id="ent-bar"></div></div>
+            <span class="measure-value" id="ent-val">0.00</span>
+          </div>
+          <div class="measure">
+            <span class="measure-label">Z correlation</span>
+            <div class="measure-bar-track"><div class="measure-bar z-corr-bar" id="z-corr-bar"></div></div>
+            <span class="measure-value" id="z-corr-val">0.00</span>
+          </div>
+          <div class="measure">
+            <span class="measure-label">X correlation</span>
+            <div class="measure-bar-track"><div class="measure-bar x-corr-bar" id="x-corr-bar"></div></div>
+            <span class="measure-value" id="x-corr-val">0.00</span>
+          </div>
+        </div>
+      </div>
+      <canvas id="waveform-canvas"></canvas>
+
+      <div id="statevector" class="statevector"></div>
+
+      <p class="hint">
+        Click a gate, then click a wire position to place it. For CNOT/CZ/iSWAP, click two different qubits at the same step. Right-click to remove.
+      </p>
+    </div>
+
+    <div class="explainer-panel">
+      <div class="explainer">
+        <h2>what is this</h2>
+        <p>
+          Harmoniq sonifies a 3-qubit quantum state. You build a quantum circuit
+          in the editor, and a playhead scrubs through it step by step. At each
+          step the full quantum state is reconstructed from scratch, and its
+          probability distribution is turned into sound. You hear the quantum
+          state evolve in real time.
+        </p>
+
+        <h2>the quantum state</h2>
+        <p>
+          The system starts with all qubits in <code>|0&rang;</code> (default
+          3 qubits, adjustable from 1 to 8). With <em>n</em> qubits there are
+          2<sup>n</sup> basis states. Each step applies gates that transform
+          the state into a superposition of all basis states, each with a
+          complex probability amplitude. The probabilities always sum to 1.
+          The state vector display shows the full amplitudes &mdash; magnitudes
+          and phases &mdash; so you can see exactly what the simulator is doing.
+        </p>
+
+        <h2>two measurement bases</h2>
+        <p>
+          A quantum state looks different depending on how you measure it.
+          Harmoniq reads the state in two complementary bases simultaneously:
+        </p>
+        <ul>
+          <li>
+            <strong class="z-col">Z-basis</strong> (computational basis) &mdash;
+            the "natural" measurement. A Hadamard on one qubit gives a 50/50
+            split between <code>|0&rang;</code> and <code>|1&rang;</code>.
+          </li>
+          <li>
+            <strong class="x-col">X-basis</strong> &mdash;
+            the "rotated" measurement. The same state that looks uncertain in
+            Z-basis looks completely definite in X-basis, and vice versa. This
+            is the uncertainty principle made audible.
+          </li>
+        </ul>
+        <p>
+          To read X-basis probabilities without collapsing the state, the
+          simulator applies a Hadamard to each qubit, reads probabilities, then
+          reverses with inverse Hadamard.
+        </p>
+
+        <h2>how probability maps to sound</h2>
+        <p>
+          Each basis state (2<sup>n</sup> for <em>n</em> qubits) is assigned
+          a note from the selected scale, extending into higher octaves as
+          needed. The mapping adapts when you change the scale, root octave,
+          qubit count, or X-basis octave offset in the sound controls.
+        </p>
+        <p>
+          All 16 oscillators (8 per basis) run continuously. The probability of
+          each basis state controls its oscillator's volume:
+          <code>gain = sqrt(probability) &times; scale</code>.
+          The square root gives a perceptually linear loudness curve. Zero
+          probability means silence; equal superposition plays all notes as a
+          chord.
+        </p>
+
+        <h2>sound controls</h2>
+        <ul>
+          <li>
+            <strong>Z wave / X wave</strong> &mdash; waveform for each basis
+            layer: sine (pure), triangle (warm overtones), square (hollow,
+            buzzy), or sawtooth (bright, harsh). Changing waveform is like
+            switching instruments.
+          </li>
+          <li>
+            <strong>scale</strong> &mdash; which musical scale the 8 basis
+            states map onto. Options: C major, C minor, pentatonic, whole tone,
+            chromatic, blues, dorian, phrygian. Each distributes the notes
+            differently across the octave.
+          </li>
+          <li>
+            <strong>octave</strong> &mdash; root octave (2&ndash;6). Lower
+            octaves produce deep drones; higher octaves are bell-like.
+          </li>
+          <li>
+            <strong>X octave</strong> &mdash; pitch offset for the X-basis
+            layer relative to the root. Default +1 (one octave up) separates
+            the two layers by register. Set to "same" to hear them in unison,
+            or -1 to put X below Z.
+          </li>
+          <li>
+            <strong>decay</strong> &mdash; note attenuation. At 0 (off),
+            notes sustain continuously as a drone. Increasing decay makes notes
+            fade after each step &mdash; low values give pad-like tails, high
+            values give short plucks. At 100% decay is ~50ms (percussive).
+          </li>
+          <li>
+            <strong>reverb</strong> &mdash; delay-feedback reverb with a
+            lowpass filter on the tail. 0% is fully dry. Higher values add
+            space and wash.
+          </li>
+          <li>
+            <strong>Z vol / X vol / master</strong> &mdash; independent
+            volume for each basis bus and the master output. Use these to
+            solo one basis or balance the mix.
+          </li>
+        </ul>
+
+        <h2>transport</h2>
+        <ul>
+          <li>
+            <strong>play / stop</strong> &mdash; starts the playhead from
+            step 0. The circuit loops continuously.
+          </li>
+          <li>
+            <strong>speed</strong> &mdash; how many steps per second the
+            playhead advances (0.5&ndash;8). Slower speeds let you hear
+            each state change distinctly; faster speeds blur into a rhythm.
+          </li>
+          <li>
+            <strong>&minus; step / + step</strong> &mdash; remove or add
+            one time step. Removing a step deletes any gates on it.
+          </li>
+          <li>
+            <strong>&minus; qubit / + qubit</strong> &mdash; remove or add
+            a qubit wire (1&ndash;8). Adding a qubit doubles the number of
+            basis states and oscillators. Removing one halves them and
+            deletes any gates referencing the removed wire.
+          </li>
+          <li>
+            <strong>clear</strong> &mdash; removes all gates from the
+            circuit without changing the number of steps.
+          </li>
+        </ul>
+
+        <h2>presets</h2>
+        <ul>
+          <li>
+            <strong>full superposition</strong> &mdash; H on all 3 qubits
+            at step 0. Equal probability across all 8 states in Z-basis;
+            all weight on <code>|000&rang;</code> in X-basis. Listen for the
+            full chord in Z vs. a single note in X.
+          </li>
+          <li>
+            <strong>GHZ entangled</strong> &mdash; H then two CNOTs,
+            creating (&verbar;000&rang; + &verbar;111&rang;)/&radic;2. Maximally
+            entangled: two notes in Z-basis, a complex spread in X-basis.
+          </li>
+          <li>
+            <strong>product state</strong> &mdash; each qubit prepared
+            independently (H, H+T, X+H). All 8 states have nonzero
+            probability but zero correlations between qubits. This is the
+            non-entangled baseline.
+          </li>
+        </ul>
+
+        <h2>what to listen for</h2>
+        <ul>
+          <li>
+            <strong>Single note &rarr; chord:</strong> Place H on one qubit.
+            Z-basis splits from one note into two; X-basis collapses from
+            spread to focused. Complementarity: sharpness in one basis costs
+            sharpness in the other.
+          </li>
+          <li>
+            <strong>Entanglement:</strong> H then CNOT. Z-basis plays two
+            notes (Bell state), X-basis spreads wider. Entangled states
+            sound "wider" across bases.
+          </li>
+          <li>
+            <strong>Phase gates (Z, T):</strong> These change phase without
+            affecting Z-basis probabilities &mdash; so Z-basis sound is
+            identical before and after. But X-basis hears the difference
+            immediately. Something invisible in one basis is loud in the other.
+          </li>
+          <li>
+            <strong>Scale + decay:</strong> Try blues scale with moderate
+            decay for a jazzy plucked feel. Whole tone with no decay for
+            an eerie drone. Pentatonic always sounds consonant.
+          </li>
+          <li>
+            <strong>iSWAP:</strong> Swaps two qubits and adds phase.
+            Listen for notes trading places across the scale.
+          </li>
+        </ul>
+
+        <h2>the gates</h2>
+        <table>
+          <tr>
+            <th>gate</th>
+            <th>n</th>
+            <th>what it does</th>
+          </tr>
+          <tr>
+            <td><span class="gate-ref" style="color:#4fc3f7;border-color:#4fc3f7">H</span></td>
+            <td>1</td>
+            <td>Hadamard &mdash; creates or destroys superposition. Maps <code>|0&rang;</code> to equal mix of <code>|0&rang;</code>+<code>|1&rang;</code>.</td>
+          </tr>
+          <tr>
+            <td><span class="gate-ref" style="color:#ef5350;border-color:#ef5350">X</span></td>
+            <td>1</td>
+            <td>Bit flip &mdash; swaps <code>|0&rang;</code> and <code>|1&rang;</code>. The quantum NOT gate.</td>
+          </tr>
+          <tr>
+            <td><span class="gate-ref" style="color:#ab47bc;border-color:#ab47bc">Z</span></td>
+            <td>1</td>
+            <td>Phase flip &mdash; multiplies <code>|1&rang;</code> by &minus;1. No change to Z-basis probabilities; rotates X-basis.</td>
+          </tr>
+          <tr>
+            <td><span class="gate-ref" style="color:#ffb74d;border-color:#ffb74d">T</span></td>
+            <td>1</td>
+            <td>Pi/8 gate &mdash; phase of e<sup>i&pi;/4</sup> on <code>|1&rang;</code>. A gentle Z. Subtle X-basis shifts.</td>
+          </tr>
+          <tr>
+            <td><span class="gate-ref" style="color:#ef5350;border-color:#ef5350">CNOT</span></td>
+            <td>2</td>
+            <td>Controlled-X &mdash; flips the target only when control is <code>|1&rang;</code>. Creates entanglement from superposition.</td>
+          </tr>
+          <tr>
+            <td><span class="gate-ref" style="color:#ab47bc;border-color:#ab47bc">CZ</span></td>
+            <td>2</td>
+            <td>Controlled-Z &mdash; phase flip when both qubits are <code>|1&rang;</code>. Symmetric between the two qubits.</td>
+          </tr>
+          <tr>
+            <td><span class="gate-ref" style="color:#66bb6a;border-color:#66bb6a">iSWAP</span></td>
+            <td>2</td>
+            <td>Swaps two qubits and adds a phase of <em>i</em>. Creates anti-correlated entanglement.</td>
+          </tr>
+          <tr>
+            <td><span class="gate-ref" style="color:#78909c;border-color:#78909c">M</span></td>
+            <td>1</td>
+            <td>Measurement &mdash; collapses a qubit in the Z-basis. Creates a mixed state: the simulator branches into all possible outcomes, weighted by probability. Destroys entanglement on the measured qubit but preserves classical correlations.</td>
+          </tr>
+        </table>
+
+        <h2>the visualizations</h2>
+        <ul>
+          <li>
+            <strong>Bar chart</strong> &mdash; 8 pairs of bars, one per basis
+            state. <span class="z-col">Blue</span> = Z-basis probability,
+            <span class="x-col">orange</span> = X-basis. Height is probability
+            (0&ndash;1). Note names from the current scale are shown below.
+          </li>
+          <li>
+            <strong>Waveforms</strong> &mdash; three real-time oscilloscope
+            lanes showing the audio signal. Top (<span class="z-col">blue</span>)
+            is the Z-basis submix, middle
+            (<span class="x-col">orange</span>) is X-basis, bottom (gray) is
+            the combined master output after reverb.
+          </li>
+          <li>
+            <strong>State vector</strong> &mdash; the full
+            |&psi;&rang; = &sum; &alpha;<sub>i</sub>|i&rang; with magnitudes
+            (blue) and phases (purple). Common values are shown symbolically
+            (1/&radic;2, <em>i</em>, e<sup>i&pi;/4</sup>, etc.). Zero-amplitude
+            terms are hidden.
+          </li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
