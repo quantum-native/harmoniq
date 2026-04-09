@@ -1,5 +1,7 @@
 # harmoniq
 
+**[Live demo](https://harmoniq.quantum.dev)**
+
 A quantum synth that sonifies quantum states. Build quantum circuits and hear them play.
 
 Harmoniq maps the probability distribution of an n-qubit quantum state to sound. A playhead scrubs through a circuit step by step, and at each step the state is evaluated in both the Z-basis and X-basis. Each basis state is assigned a note from a configurable scale, and its probability controls the volume of that note's oscillator.
@@ -13,7 +15,7 @@ Harmoniq maps the probability distribution of an n-qubit quantum state to sound.
 
 ## Quantum simulation
 
-All quantum simulation runs through [Quantum Forge](https://quantum.dev) via the `@quantum-native/quantum-forge` npm package. Gate operations, probability queries, and density matrix reads are delegated to the Quantum Forge WASM backend -- there is no custom quantum math in this project.
+All quantum simulation runs through [Quantum Forge](https://quantum.dev) via the [`quantum-forge`](https://www.npmjs.com/package/quantum-forge) npm package. Gate operations, probability queries, and density matrix reads are delegated to the Quantum Forge WASM backend -- there is no custom quantum math in this project.
 
 ## Development
 
