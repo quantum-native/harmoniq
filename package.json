@@ -5,12 +5,12 @@
   "private": true,
   "scripts": {
     "dev": "vite",
-    "build": "vite build"
+    "build": "vite build && node scripts/copy-wasm.mjs"
   },
   "devDependencies": {
     "vite": "^8.0.7"
   },
   "dependencies": {
-    "@quantum-native/quantum-forge": "^2.0.1"
+    "quantum-forge": "^2.0.2"
   }
 }
