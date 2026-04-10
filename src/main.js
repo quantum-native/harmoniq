@@ -245,13 +245,19 @@ async function main() {
   function drawViz(zBasis, xBasis, numQubits) {
     const numStates = 1 << numQubits;
     const dpr = devicePixelRatio;
-    const barW = numStates <= 8 ? 22 : numStates <= 16 ? 14 : 8;
-    const gap = numStates <= 8 ? 6 : numStates <= 16 ? 4 : 2;
-    const groupGap = numStates <= 8 ? 8 : numStates <= 16 ? 4 : 2;
-    const groupW = barW * 2 + gap;
-    const totalW = numStates * (groupW + groupGap) - groupGap;
-    const w = Math.max(480, totalW + 40);
-    const h = 200;
+    // Fit to container width
+    const containerW = vizCanvas.parentElement.clientWidth;
+    const w = Math.max(360, containerW);
+    const h = 220;
+
+    // Compute bar geometry to fit the available width
+    const usableW = w - 40;
+    const groupGap = numStates <= 8 ? 12 : numStates <= 16 ? 6 : 3;
+    const groupW = (usableW - (numStates - 1) * groupGap) / numStates;
+    const gap = Math.max(2, Math.min(8, groupW * 0.12));
+    const barW = (groupW - gap) / 2;
+    const totalW = numStates * groupW + (numStates - 1) * groupGap;
+
     vizCanvas.width = w * dpr;
     vizCanvas.height = h * dpr;
     vizCanvas.style.width = w + "px";
@@ -265,8 +271,10 @@ async function main() {
     // Subtle baseline grid
     vizCtx.strokeStyle = "#182035";
     vizCtx.lineWidth = 0.5;
+    const maxH = 150;
+    const baseY = h - 36;
     for (let i = 0; i <= 4; i++) {
-      const y = 30 + (140 / 4) * i;
+      const y = baseY - (maxH / 4) * i;
       vizCtx.beginPath();
       vizCtx.moveTo(20, y);
       vizCtx.lineTo(w - 20, y);
@@ -274,8 +282,6 @@ async function main() {
     }
 
     const startX = (w - totalW) / 2;
-    const maxH = 140;
-    const baseY = h - 30;
 
     const ap = audio.getParams();
     vizCtx.fillStyle = "#22d3ee";
@@ -322,11 +328,12 @@ async function main() {
 
   // Waveform visualization
   const wfCtx = waveformCanvas.getContext("2d");
-  const WF_W = 480;
-  const WF_H = 160;
+  let WF_W = 480;
+  const WF_H = 200;
 
   function setupWaveformCanvas() {
     const dpr = devicePixelRatio;
+    WF_W = waveformCanvas.parentElement.clientWidth || 480;
     waveformCanvas.width = WF_W * dpr;
     waveformCanvas.height = WF_H * dpr;
     waveformCanvas.style.width = WF_W + "px";
@@ -334,18 +341,15 @@ async function main() {
     wfCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
   setupWaveformCanvas();
+  window.addEventListener("resize", () => {
+    setupWaveformCanvas();
+    drawWaveforms();
+  });
 
   function drawWaveforms() {
-    const analysers = audio.getAnalysers();
-    if (!analysers.z || !analysers.x) return;
-
-    const bufLen = analysers.z.frequencyBinCount;
-    const zData = new Float32Array(bufLen);
-    const xData = new Float32Array(bufLen);
-    const masterData = new Float32Array(bufLen);
-    analysers.z.getFloatTimeDomainData(zData);
-    analysers.x.getFloatTimeDomainData(xData);
-    analysers.master.getFloatTimeDomainData(masterData);
+    if (waveformCanvas.parentElement.clientWidth !== WF_W) {
+      setupWaveformCanvas();
+    }
 
     wfCtx.clearRect(0, 0, WF_W, WF_H);
     wfCtx.fillStyle = "#0c1018";
@@ -356,9 +360,27 @@ async function main() {
     wfCtx.font = "9px 'Chakra Petch', monospace";
     wfCtx.textAlign = "left";
 
-    drawWave(zData, bufLen, 0, laneH, "#22d3ee", "Z-BASIS");
-    drawWave(xData, bufLen, laneH, laneH, "#fbbf24", "X-BASIS");
-    drawWave(masterData, bufLen, laneH * 2, laneH, "#94a3b8", "MIXED OUT");
+    const analysers = audio.getAnalysers();
+    const hasAnalysers = analysers.z && analysers.x;
+
+    if (hasAnalysers) {
+      const bufLen = analysers.z.frequencyBinCount;
+      const zData = new Float32Array(bufLen);
+      const xData = new Float32Array(bufLen);
+      const masterData = new Float32Array(bufLen);
+      analysers.z.getFloatTimeDomainData(zData);
+      analysers.x.getFloatTimeDomainData(xData);
+      analysers.master.getFloatTimeDomainData(masterData);
+
+      drawWave(zData, bufLen, 0, laneH, "#22d3ee", "Z-BASIS");
+      drawWave(xData, bufLen, laneH, laneH, "#fbbf24", "X-BASIS");
+      drawWave(masterData, bufLen, laneH * 2, laneH, "#94a3b8", "MIXED OUT");
+    } else {
+      // Empty state — show lane labels and center lines
+      drawWaveEmpty(0, laneH, "#22d3ee", "Z-BASIS");
+      drawWaveEmpty(laneH, laneH, "#fbbf24", "X-BASIS");
+      drawWaveEmpty(laneH * 2, laneH, "#94a3b8", "MIXED OUT");
+    }
 
     wfCtx.strokeStyle = "#182035";
     wfCtx.lineWidth = 0.5;
@@ -368,6 +390,28 @@ async function main() {
       wfCtx.lineTo(WF_W, laneH * i);
       wfCtx.stroke();
     }
+  }
+
+  function drawWaveEmpty(yOffset, height, color, label) {
+    const midY = yOffset + height / 2;
+
+    // Center line
+    wfCtx.strokeStyle = "#182035";
+    wfCtx.lineWidth = 0.5;
+    wfCtx.beginPath();
+    wfCtx.moveTo(0, midY);
+    wfCtx.lineTo(WF_W, midY);
+    wfCtx.stroke();
+
+    // Label
+    wfCtx.fillStyle = color;
+    wfCtx.globalAlpha = 0.45;
+    wfCtx.fillText(label, 8, yOffset + 13);
+    wfCtx.globalAlpha = 0.2;
+    wfCtx.font = "8px 'Chakra Petch', monospace";
+    wfCtx.fillText("— SIGNAL OFFLINE —", WF_W / 2 - 50, midY + 4);
+    wfCtx.font = "9px 'Chakra Petch', monospace";
+    wfCtx.globalAlpha = 1;
   }
 
   function drawWave(data, bufLen, yOffset, height, color, label) {
@@ -566,12 +610,20 @@ async function main() {
     xCorrVal.textContent = xc.toFixed(2);
   }
 
-  // Initial draws
-  const n0 = editor.getCircuit().numQubits;
-  const ns0 = 1 << n0;
-  drawViz(new Array(ns0).fill(0), new Array(ns0).fill(0), n0);
-  drawStateVector(null, n0);
-  drawMeasures(null);
+  // Resize handling
+  window.addEventListener("resize", () => {
+    // Re-evaluate to redraw at new sizes
+    const circuit = editor.getCircuit();
+    const result = engine.evaluate(circuit, -1);
+    drawViz(result.zBasis, result.xBasis, result.numQubits);
+    drawWaveforms();
+  });
+
+  // Initial draws — evaluate the empty circuit at step -1 (just |0...0⟩)
+  const initial = engine.evaluate(editor.getCircuit(), -1);
+  drawViz(initial.zBasis, initial.xBasis, initial.numQubits);
+  drawStateVector(initial.stateVector, initial.numQubits);
+  drawMeasures(initial.measures);
   drawWaveforms();
 }
 

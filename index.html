@@ -200,6 +200,9 @@
     display: flex;
     gap: 36px;
     align-items: flex-start;
+    max-width: 1500px;
+    margin: 0 auto;
+    width: 100%;
     animation: fadeUp 0.7s var(--ease) 0.1s both;
   }
 
@@ -208,7 +211,7 @@
     display: flex;
     flex-direction: column;
     gap: 22px;
-    flex: 1;
+    flex: 1.1;
     min-width: 0;
   }
 
@@ -217,12 +220,12 @@
     display: flex;
     flex-direction: column;
     gap: 22px;
-    flex-shrink: 0;
-    width: 520px;
-    max-width: 100%;
+    flex: 1;
+    min-width: 0;
   }
   .analysis-column canvas {
     max-width: 100%;
+    display: block;
   }
 
   .panel-section {
@@ -468,12 +471,7 @@
     font-variant-numeric: tabular-nums;
   }
 
-  /* ── Visualization row ────────────────────────────────────────────── */
-  .viz-row {
-    display: flex;
-    gap: 14px;
-    align-items: stretch;
-  }
+  /* ── Visualization ────────────────────────────────────────────────── */
   #viz-canvas, #waveform-canvas {
     background: var(--surface);
     border: 1px solid var(--surface-3);
@@ -482,14 +480,12 @@
 
   /* ── Measures ─────────────────────────────────────────────────────── */
   .measures {
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    gap: 16px;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 18px 24px;
     background: var(--surface);
     border: 1px solid var(--surface-3);
-    padding: 16px 18px;
-    min-width: 150px;
+    padding: 16px 22px;
     clip-path: var(--cut-md);
   }
   .measure {
@@ -761,7 +757,7 @@
     </div>
     <div class="header-meta">
       <span class="live-dot"><span id="status">Initializing</span></span>
-      <span id="version">v0.2.1</span>
+      <span id="version">v0.2.2</span>
     </div>
   </header>
 
@@ -898,24 +894,22 @@
     <div class="analysis-column">
       <div class="panel-section">
         <span class="section-label"><span class="num">05</span> Probability</span>
-        <div class="viz-row">
-          <canvas id="viz-canvas"></canvas>
-          <div class="measures" id="measures">
-            <div class="measure">
-              <span class="measure-label">Entanglement</span>
-              <div class="measure-bar-track"><div class="measure-bar entanglement-bar" id="ent-bar"></div></div>
-              <span class="measure-value" id="ent-val">0.00</span>
-            </div>
-            <div class="measure">
-              <span class="measure-label">Z Correlation</span>
-              <div class="measure-bar-track"><div class="measure-bar z-corr-bar" id="z-corr-bar"></div></div>
-              <span class="measure-value" id="z-corr-val">0.00</span>
-            </div>
-            <div class="measure">
-              <span class="measure-label">X Correlation</span>
-              <div class="measure-bar-track"><div class="measure-bar x-corr-bar" id="x-corr-bar"></div></div>
-              <span class="measure-value" id="x-corr-val">0.00</span>
-            </div>
+        <canvas id="viz-canvas"></canvas>
+        <div class="measures" id="measures">
+          <div class="measure">
+            <span class="measure-label">Entanglement</span>
+            <div class="measure-bar-track"><div class="measure-bar entanglement-bar" id="ent-bar"></div></div>
+            <span class="measure-value" id="ent-val">0.00</span>
+          </div>
+          <div class="measure">
+            <span class="measure-label">Z Correlation</span>
+            <div class="measure-bar-track"><div class="measure-bar z-corr-bar" id="z-corr-bar"></div></div>
+            <span class="measure-value" id="z-corr-val">0.00</span>
+          </div>
+          <div class="measure">
+            <span class="measure-label">X Correlation</span>
+            <div class="measure-bar-track"><div class="measure-bar x-corr-bar" id="x-corr-bar"></div></div>
+            <span class="measure-value" id="x-corr-val">0.00</span>
           </div>
         </div>
       </div>
