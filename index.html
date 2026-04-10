@@ -357,11 +357,22 @@
     color: var(--void);
     font-weight: 700;
     padding: 8px 22px;
+    min-width: 96px;
+    text-align: center;
   }
   #play-btn:hover {
     box-shadow: 0 0 24px var(--coral-glow);
     color: var(--void);
     background: linear-gradient(135deg, var(--coral-bright) 0%, var(--coral) 100%);
+  }
+  #play-btn.playing {
+    background: linear-gradient(135deg, var(--cyan) 0%, var(--cyan-bright) 100%);
+    border-color: var(--cyan-bright);
+    box-shadow: 0 0 18px var(--cyan-glow);
+  }
+  #play-btn.playing:hover {
+    background: linear-gradient(135deg, var(--cyan-bright) 0%, var(--cyan) 100%);
+    box-shadow: 0 0 24px var(--cyan-glow);
   }
 
   .transport label {
@@ -776,7 +787,7 @@
     </div>
     <div class="header-meta">
       <span class="live-dot"><span id="status">Initializing</span></span>
-      <span id="version">v0.3.1</span>
+      <span id="version">v0.3.2</span>
     </div>
   </header>
 
@@ -807,7 +818,6 @@
         <span class="section-label"><span class="num">03</span> Transport</span>
         <div class="transport">
           <button id="play-btn">▶ Play</button>
-          <button id="stop-btn">■ Stop</button>
           <button id="remove-steps-btn">− Step</button>
           <button id="add-steps-btn">+ Step</button>
           <button id="remove-qubit-btn">− Qubit</button>

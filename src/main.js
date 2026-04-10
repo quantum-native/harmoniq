@@ -8,7 +8,6 @@ const vizCanvas = document.getElementById("viz-canvas");
 const waveformCanvas = document.getElementById("waveform-canvas");
 const statevectorEl = document.getElementById("statevector");
 const playBtn = document.getElementById("play-btn");
-const stopBtn = document.getElementById("stop-btn");
 const speedSlider = document.getElementById("speed-slider");
 const speedLabel = document.getElementById("speed-label");
 const gateButtons = document.querySelectorAll(".gate-btn");
@@ -193,7 +192,7 @@ async function main() {
   document.getElementById("sound-controls").addEventListener("change", syncAudioParams);
 
   // Transport
-  playBtn.addEventListener("click", () => {
+  function startPlayback() {
     if (playing) return;
     playing = true;
     playheadStep = 0;
@@ -202,14 +201,24 @@ async function main() {
     updateState();
     tick();
     status.textContent = "Playing";
-  });
+    playBtn.textContent = "■ Stop";
+    playBtn.classList.add("playing");
+  }
 
-  stopBtn.addEventListener("click", () => {
+  function stopPlayback() {
+    if (!playing) return;
     playing = false;
     audio.stop();
     if (animId) cancelAnimationFrame(animId);
     editor.setPlayheadPosition(-1);
-    status.textContent = "Stopped";
+    status.textContent = "Ready";
+    playBtn.textContent = "▶ Play";
+    playBtn.classList.remove("playing");
+  }
+
+  playBtn.addEventListener("click", () => {
+    if (playing) stopPlayback();
+    else startPlayback();
   });
 
   function onCircuitChange() {
