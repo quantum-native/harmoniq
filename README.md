@@ -10,7 +10,7 @@ Harmoniq maps the probability distribution of an n-qubit quantum state to sound.
 
 - **Circuit editor** -- place gates (H, X, Z, T, CNOT, CZ, iSWAP, M) on qubit wires
 - **Two-basis sonification** -- Z-basis drives sine/square/saw/triangle oscillators; X-basis drives a separate layer one octave up by default
-- **Measurement gate** -- collapses a qubit mid-circuit, creating a mixed state. The simulator branches into all possible outcomes weighted by probability
+- **Measurement gate** -- collapses a qubit mid-circuit
 - **Live visualization** -- probability bar chart, real-time waveform oscilloscope, state vector display, entanglement and correlation meters
 
 ## Quantum simulation
