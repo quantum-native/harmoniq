@@ -43,11 +43,9 @@ Every time the playhead advances, harmoniq creates a fresh `QuantumPropertyManag
 ## Development
 
 ```
-npm install --legacy-peer-deps
+npm install
 npm run dev
 ```
-
-The `--legacy-peer-deps` flag is needed because the quantum forge package declares a vite peer dependency that hasn't been updated for Vite 8 yet.
 
 ## Deployment
 
