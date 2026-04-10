@@ -638,6 +638,26 @@
   .explainer p {
     break-inside: avoid;
   }
+  .explainer h2 {
+    break-after: avoid-column;
+    -webkit-column-break-after: avoid;
+    page-break-after: avoid;
+  }
+  /* Group an h2 with its following sibling so they stay in the same column */
+  .explainer-section {
+    break-inside: avoid;
+    -webkit-column-break-inside: avoid;
+    page-break-inside: avoid;
+    display: inline-block;
+    width: 100%;
+    margin-bottom: 18px;
+  }
+  .explainer-section h2 {
+    margin-top: 0;
+  }
+  .explainer-section h2:not(:first-child) {
+    margin-top: 12px;
+  }
   @media (max-width: 1100px) {
     .explainer { column-count: 1; }
   }
@@ -756,7 +776,7 @@
     </div>
     <div class="header-meta">
       <span class="live-dot"><span id="status">Initializing</span></span>
-      <span id="version">v0.3.0</span>
+      <span id="version">v0.3.1</span>
     </div>
   </header>
 
@@ -931,225 +951,247 @@
       <span class="docs-sub">Reference · How It Works · The Gates</span>
     </div>
     <div class="explainer">
-        <h2>What Is This</h2>
-        <p>
-          Harmoniq sonifies a quantum state. You build a quantum circuit
-          in the editor, and a playhead scrubs through it step by step. At each
-          step the full quantum state is reconstructed, and its
-          probability distribution is turned into sound. You hear the quantum
-          state evolve in real time.
-        </p>
+        <div class="explainer-section">
+          <h2>What Is This</h2>
+          <p>
+            Harmoniq sonifies a quantum state. You build a quantum circuit
+            in the editor, and a playhead scrubs through it step by step. At each
+            step the full quantum state is reconstructed, and its
+            probability distribution is turned into sound. You hear the quantum
+            state evolve in real time.
+          </p>
+        </div>
 
-        <h2>The Quantum State</h2>
-        <p>
-          The system starts with all qubits in <code>|0⟩</code> (default
-          3 qubits, adjustable from 1 to 8). With <em>n</em> qubits there are
-          2<sup>n</sup> basis states. Each step applies gates that transform
-          the state into a superposition of all basis states, each with a
-          complex probability amplitude. The probabilities always sum to 1.
-          The state vector display shows the full amplitudes — magnitudes
-          and phases — so you can see exactly what the simulator is doing.
-        </p>
+        <div class="explainer-section">
+          <h2>The Quantum State</h2>
+          <p>
+            The system starts with all qubits in <code>|0⟩</code> (default
+            3 qubits, adjustable from 1 to 8). With <em>n</em> qubits there are
+            2<sup>n</sup> basis states. Each step applies gates that transform
+            the state into a superposition of all basis states, each with a
+            complex probability amplitude. The probabilities always sum to 1.
+            The state vector display shows the full amplitudes — magnitudes
+            and phases — so you can see exactly what the simulator is doing.
+          </p>
+        </div>
 
-        <h2>Two Measurement Bases</h2>
-        <p>
-          A quantum state looks different depending on how you measure it.
-          Harmoniq reads the state in two complementary bases simultaneously:
-        </p>
-        <ul>
-          <li>
-            <strong class="z-col">Z-basis</strong> (computational basis) —
-            the "natural" measurement. A Hadamard on one qubit gives a 50/50
-            split between <code>|0⟩</code> and <code>|1⟩</code>.
-          </li>
-          <li>
-            <strong class="x-col">X-basis</strong> —
-            the "rotated" measurement. The same state that looks uncertain in
-            Z-basis looks completely definite in X-basis, and vice versa. This
-            is the uncertainty principle made audible.
-          </li>
-        </ul>
-        <p>
-          To read X-basis probabilities without collapsing the state, the
-          simulator applies a Hadamard to each qubit, reads probabilities, then
-          reverses with inverse Hadamard.
-        </p>
+        <div class="explainer-section">
+          <h2>Two Measurement Bases</h2>
+          <p>
+            A quantum state looks different depending on how you measure it.
+            Harmoniq reads the state in two complementary bases simultaneously:
+          </p>
+          <ul>
+            <li>
+              <strong class="z-col">Z-basis</strong> (computational basis) —
+              the "natural" measurement. A Hadamard on one qubit gives a 50/50
+              split between <code>|0⟩</code> and <code>|1⟩</code>.
+            </li>
+            <li>
+              <strong class="x-col">X-basis</strong> —
+              the "rotated" measurement. The same state that looks uncertain in
+              Z-basis looks completely definite in X-basis, and vice versa. This
+              is the uncertainty principle made audible.
+            </li>
+          </ul>
+          <p>
+            To read X-basis probabilities without collapsing the state, the
+            simulator applies a Hadamard to each qubit, reads probabilities, then
+            reverses with inverse Hadamard.
+          </p>
+        </div>
 
-        <h2>How Probability Maps to Sound</h2>
-        <p>
-          Each basis state (2<sup>n</sup> for <em>n</em> qubits) is assigned
-          a note from the selected scale, extending into higher octaves as
-          needed. The mapping adapts when you change the scale, root octave,
-          qubit count, or X-basis octave offset in the sound controls.
-        </p>
-        <p>
-          All oscillators run continuously. The probability of
-          each basis state controls its oscillator's volume:
-          <code>gain = √probability × scale</code>.
-          The square root gives a perceptually linear loudness curve. Zero
-          probability means silence; equal superposition plays all notes as a
-          chord.
-        </p>
+        <div class="explainer-section">
+          <h2>How Probability Maps to Sound</h2>
+          <p>
+            Each basis state (2<sup>n</sup> for <em>n</em> qubits) is assigned
+            a note from the selected scale, extending into higher octaves as
+            needed. The mapping adapts when you change the scale, root octave,
+            qubit count, or X-basis octave offset in the sound controls.
+          </p>
+          <p>
+            All oscillators run continuously. The probability of
+            each basis state controls its oscillator's volume:
+            <code>gain = √probability × scale</code>.
+            The square root gives a perceptually linear loudness curve. Zero
+            probability means silence; equal superposition plays all notes as a
+            chord.
+          </p>
+        </div>
 
-        <h2>Sound Controls</h2>
-        <ul>
-          <li>
-            <strong>Z wave / X wave</strong> — waveform for each basis
-            layer: sine (pure), triangle (warm overtones), square (hollow,
-            buzzy), or sawtooth (bright, harsh).
-          </li>
-          <li>
-            <strong>Scale</strong> — which musical scale the basis
-            states map onto. Eight options from C major to phrygian.
-          </li>
-          <li>
-            <strong>Octave</strong> — root octave (2–6). Lower
-            octaves produce deep drones; higher octaves are bell-like.
-          </li>
-          <li>
-            <strong>X octave</strong> — pitch offset for the X-basis
-            layer relative to the root. Default +1 separates the two layers.
-          </li>
-          <li>
-            <strong>Decay</strong> — note attenuation. At 0, notes sustain
-            as a drone. Higher values give pad-like tails or short plucks.
-          </li>
-          <li>
-            <strong>Reverb</strong> — delay-feedback reverb with a
-            lowpass filter on the tail.
-          </li>
-          <li>
-            <strong>Z / X / master volume</strong> — independent
-            volume for each basis bus and the master output.
-          </li>
-        </ul>
+        <div class="explainer-section">
+          <h2>Sound Controls</h2>
+          <ul>
+            <li>
+              <strong>Z wave / X wave</strong> — waveform for each basis
+              layer: sine (pure), triangle (warm overtones), square (hollow,
+              buzzy), or sawtooth (bright, harsh).
+            </li>
+            <li>
+              <strong>Scale</strong> — which musical scale the basis
+              states map onto. Eight options from C major to phrygian.
+            </li>
+            <li>
+              <strong>Octave</strong> — root octave (2–6). Lower
+              octaves produce deep drones; higher octaves are bell-like.
+            </li>
+            <li>
+              <strong>X octave</strong> — pitch offset for the X-basis
+              layer relative to the root. Default +1 separates the two layers.
+            </li>
+            <li>
+              <strong>Decay</strong> — note attenuation. At 0, notes sustain
+              as a drone. Higher values give pad-like tails or short plucks.
+            </li>
+            <li>
+              <strong>Reverb</strong> — delay-feedback reverb with a
+              lowpass filter on the tail.
+            </li>
+            <li>
+              <strong>Z / X / master volume</strong> — independent
+              volume for each basis bus and the master output.
+            </li>
+          </ul>
+        </div>
 
-        <h2>Transport</h2>
-        <ul>
-          <li><strong>Play / Stop</strong> — starts the playhead from step 0. Loops continuously.</li>
-          <li><strong>Speed</strong> — steps per second (0.5–8).</li>
-          <li><strong>± Step</strong> — add or remove time steps.</li>
-          <li><strong>± Qubit</strong> — add or remove qubit wires (1–8). Doubles or halves the basis states.</li>
-          <li><strong>Clear</strong> — removes all gates without changing the number of steps.</li>
-        </ul>
+        <div class="explainer-section">
+          <h2>Transport</h2>
+          <ul>
+            <li><strong>Play / Stop</strong> — starts the playhead from step 0. Loops continuously.</li>
+            <li><strong>Speed</strong> — steps per second (0.5–8).</li>
+            <li><strong>± Step</strong> — add or remove time steps.</li>
+            <li><strong>± Qubit</strong> — add or remove qubit wires (1–8). Doubles or halves the basis states.</li>
+            <li><strong>Clear</strong> — removes all gates without changing the number of steps.</li>
+          </ul>
+        </div>
 
-        <h2>Presets</h2>
-        <ul>
-          <li>
-            <strong>Scale</strong> — walks through all basis states
-            sequentially using X gates. Try this with decay turned up for an arpeggio.
-          </li>
-          <li>
-            <strong>Full Superposition</strong> — H on all qubits.
-            Equal probability across all states in Z-basis;
-            single note in X-basis.
-          </li>
-          <li>
-            <strong>GHZ Entangled</strong> — H then two CNOTs,
-            creating (|000⟩ + |111⟩)/√2. Maximally
-            entangled: two notes in Z-basis, complex spread in X-basis.
-          </li>
-          <li>
-            <strong>Product State</strong> — each qubit prepared
-            independently. The non-entangled baseline.
-          </li>
-          <li>
-            <strong>Classical Corr.</strong> — H + CNOT + measurement.
-            Creates a mixed state with classical correlation but no entanglement.
-          </li>
-        </ul>
+        <div class="explainer-section">
+          <h2>Presets</h2>
+          <ul>
+            <li>
+              <strong>Scale</strong> — walks through all basis states
+              sequentially using X gates. Try this with decay turned up for an arpeggio.
+            </li>
+            <li>
+              <strong>Full Superposition</strong> — H on all qubits.
+              Equal probability across all states in Z-basis;
+              single note in X-basis.
+            </li>
+            <li>
+              <strong>GHZ Entangled</strong> — H then two CNOTs,
+              creating (|000⟩ + |111⟩)/√2. Maximally
+              entangled: two notes in Z-basis, complex spread in X-basis.
+            </li>
+            <li>
+              <strong>Product State</strong> — each qubit prepared
+              independently. The non-entangled baseline.
+            </li>
+            <li>
+              <strong>Classical Corr.</strong> — H + CNOT + measurement.
+              Creates a mixed state with classical correlation but no entanglement.
+            </li>
+          </ul>
+        </div>
 
-        <h2>What to Listen For</h2>
-        <ul>
-          <li>
-            <strong>Single note → chord:</strong> Place H on one qubit.
-            Z-basis splits from one note into two; X-basis collapses from
-            spread to focused. Complementarity in action.
-          </li>
-          <li>
-            <strong>Entanglement:</strong> H then CNOT. Z-basis plays two
-            notes (Bell state), X-basis spreads wider.
-          </li>
-          <li>
-            <strong>Phase gates (Z, T):</strong> These change phase without
-            affecting Z-basis probabilities. But X-basis hears the difference
-            immediately. Something invisible in one basis is loud in the other.
-          </li>
-          <li>
-            <strong>Scale + decay:</strong> Try blues with moderate
-            decay for a jazzy plucked feel. Whole tone with no decay for
-            an eerie drone. Pentatonic always sounds consonant.
-          </li>
-          <li>
-            <strong>Toffoli:</strong> Two controls plus an X (● + ● + X)
-            flips the target only when both controls are |1⟩. A 3-input AND.
-          </li>
-        </ul>
+        <div class="explainer-section">
+          <h2>What to Listen For</h2>
+          <ul>
+            <li>
+              <strong>Single note → chord:</strong> Place H on one qubit.
+              Z-basis splits from one note into two; X-basis collapses from
+              spread to focused. Complementarity in action.
+            </li>
+            <li>
+              <strong>Entanglement:</strong> H then CNOT. Z-basis plays two
+              notes (Bell state), X-basis spreads wider.
+            </li>
+            <li>
+              <strong>Phase gates (Z, T):</strong> These change phase without
+              affecting Z-basis probabilities. But X-basis hears the difference
+              immediately. Something invisible in one basis is loud in the other.
+            </li>
+            <li>
+              <strong>Scale + decay:</strong> Try blues with moderate
+              decay for a jazzy plucked feel. Whole tone with no decay for
+              an eerie drone. Pentatonic always sounds consonant.
+            </li>
+            <li>
+              <strong>Toffoli:</strong> Two controls plus an X (● + ● + X)
+              flips the target only when both controls are |1⟩. A 3-input AND.
+            </li>
+          </ul>
+        </div>
 
-        <h2>The Gates</h2>
-        <table>
-          <tr><th>Gate</th><th>N</th><th>What It Does</th></tr>
-          <tr>
-            <td><span class="gate-ref" style="color:#22d3ee;border-color:#22d3ee">H</span></td>
-            <td>1</td>
-            <td>Hadamard — creates or destroys superposition.</td>
-          </tr>
-          <tr>
-            <td><span class="gate-ref" style="color:#ff6b6b;border-color:#ff6b6b">X</span></td>
-            <td>1</td>
-            <td>Bit flip. The quantum NOT gate.</td>
-          </tr>
-          <tr>
-            <td><span class="gate-ref" style="color:#a855f7;border-color:#a855f7">Z</span></td>
-            <td>1</td>
-            <td>Phase flip. No change to Z probabilities; rotates X.</td>
-          </tr>
-          <tr>
-            <td><span class="gate-ref" style="color:#fbbf24;border-color:#fbbf24">T</span></td>
-            <td>1</td>
-            <td>π/8 phase gate. A gentle Z. Subtle X-basis shifts.</td>
-          </tr>
-          <tr>
-            <td><span class="gate-ref" style="color:#94a3b8;border-color:#94a3b8">●</span></td>
-            <td>1</td>
-            <td>Control marker. Drop in the same step as another gate to make it controlled. Multiple controls in one step give multi-controlled gates (e.g. ● + ● + X = Toffoli).</td>
-          </tr>
-          <tr>
-            <td><span class="gate-ref" style="color:#94a3b8;border-color:#94a3b8">M</span></td>
-            <td>1</td>
-            <td>Measurement. Collapses a qubit, creating a mixed state.</td>
-          </tr>
-        </table>
+        <div class="explainer-section">
+          <h2>The Gates</h2>
+          <table>
+            <tr><th>Gate</th><th>N</th><th>What It Does</th></tr>
+            <tr>
+              <td><span class="gate-ref" style="color:#22d3ee;border-color:#22d3ee">H</span></td>
+              <td>1</td>
+              <td>Hadamard — creates or destroys superposition.</td>
+            </tr>
+            <tr>
+              <td><span class="gate-ref" style="color:#ff6b6b;border-color:#ff6b6b">X</span></td>
+              <td>1</td>
+              <td>Bit flip. The quantum NOT gate.</td>
+            </tr>
+            <tr>
+              <td><span class="gate-ref" style="color:#a855f7;border-color:#a855f7">Z</span></td>
+              <td>1</td>
+              <td>Phase flip. No change to Z probabilities; rotates X.</td>
+            </tr>
+            <tr>
+              <td><span class="gate-ref" style="color:#fbbf24;border-color:#fbbf24">T</span></td>
+              <td>1</td>
+              <td>π/8 phase gate. A gentle Z. Subtle X-basis shifts.</td>
+            </tr>
+            <tr>
+              <td><span class="gate-ref" style="color:#94a3b8;border-color:#94a3b8">●</span></td>
+              <td>1</td>
+              <td>Control marker. Drop in the same step as another gate to make it controlled. Multiple controls in one step give multi-controlled gates (e.g. ● + ● + X = Toffoli).</td>
+            </tr>
+            <tr>
+              <td><span class="gate-ref" style="color:#94a3b8;border-color:#94a3b8">M</span></td>
+              <td>1</td>
+              <td>Measurement. Collapses a qubit, creating a mixed state.</td>
+            </tr>
+          </table>
+        </div>
 
-        <h2>Controlled Gates</h2>
-        <p>
-          Instead of dedicated CNOT/CZ gates, harmoniq uses a generic
-          <strong>control marker (●)</strong>. Drop a control on one wire and
-          any other gate on another wire <em>at the same step</em>, and the
-          control becomes a predicate for that gate. The control wire and
-          target gate are automatically connected with a vertical line.
-        </p>
-        <p>
-          This gives you any controlled gate without needing a separate type:
-        </p>
-        <ul>
-          <li><strong>● + X</strong> = CNOT (controlled-X, the standard entangler)</li>
-          <li><strong>● + Z</strong> = CZ (controlled phase flip)</li>
-          <li><strong>● + H</strong> = controlled Hadamard</li>
-          <li><strong>● + T</strong> = controlled π/8 phase</li>
-          <li><strong>● + ● + X</strong> = Toffoli (CCNOT, a universal classical gate)</li>
-          <li><strong>● + ● + ● + X</strong> = CCCNOT, and so on</li>
-        </ul>
+        <div class="explainer-section">
+          <h2>Controlled Gates</h2>
+          <p>
+            Instead of dedicated CNOT/CZ gates, harmoniq uses a generic
+            <strong>control marker (●)</strong>. Drop a control on one wire and
+            any other gate on another wire <em>at the same step</em>, and the
+            control becomes a predicate for that gate. The control wire and
+            target gate are automatically connected with a vertical line.
+          </p>
+          <p>
+            This gives you any controlled gate without needing a separate type:
+          </p>
+          <ul>
+            <li><strong>● + X</strong> = CNOT (controlled-X, the standard entangler)</li>
+            <li><strong>● + Z</strong> = CZ (controlled phase flip)</li>
+            <li><strong>● + H</strong> = controlled Hadamard</li>
+            <li><strong>● + T</strong> = controlled π/8 phase</li>
+            <li><strong>● + ● + X</strong> = Toffoli (CCNOT, a universal classical gate)</li>
+            <li><strong>● + ● + ● + X</strong> = CCCNOT, and so on</li>
+          </ul>
+        </div>
 
-        <h2>Quantum Forge</h2>
-        <p>
-          All quantum simulation runs through
-          <a href="https://quantum.dev" style="color: var(--cyan-bright); text-decoration: none;">Quantum Forge</a>
-          via the public <code>quantum-forge</code> npm package. Gate
-          operations, probability queries, and density matrix reads are
-          delegated to the WASM backend — there is no custom quantum math
-          in this project.
-        </p>
+        <div class="explainer-section">
+          <h2>Quantum Forge</h2>
+          <p>
+            All quantum simulation runs through
+            <a href="https://quantum.dev" style="color: var(--cyan-bright); text-decoration: none;">Quantum Forge</a>
+            via the public <code>quantum-forge</code> npm package. Gate
+            operations, probability queries, and density matrix reads are
+            delegated to the WASM backend — there is no custom quantum math
+            in this project.
+          </p>
+        </div>
     </div>
   </section>
 
