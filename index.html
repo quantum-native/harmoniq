@@ -291,19 +291,18 @@
   .gate-btn[data-gate="X"]      { color: var(--coral); }
   .gate-btn[data-gate="Z"]      { color: var(--violet-bright); }
   .gate-btn[data-gate="T"]      { color: var(--gold); }
-  .gate-btn[data-gate="CNOT"]   { color: var(--coral); }
-  .gate-btn[data-gate="CZ"]     { color: var(--violet-bright); }
-  .gate-btn[data-gate="iSWAP"]  { color: var(--magenta-bright); }
+  .gate-btn[data-gate="CTRL"]   { color: var(--text-muted); font-size: 16px; line-height: 0.6; }
   .gate-btn[data-gate="M"]      { color: var(--text-muted); }
 
   .gate-btn[data-gate="H"].active      { box-shadow: 0 0 14px var(--cyan-glow); border-color: var(--cyan-bright); }
   .gate-btn[data-gate="X"].active      { box-shadow: 0 0 14px var(--coral-glow); border-color: var(--coral); }
   .gate-btn[data-gate="Z"].active      { box-shadow: 0 0 14px var(--violet-glow); border-color: var(--violet-bright); }
   .gate-btn[data-gate="T"].active      { box-shadow: 0 0 14px var(--gold-glow); border-color: var(--gold); }
-  .gate-btn[data-gate="CNOT"].active   { box-shadow: 0 0 14px var(--coral-glow); border-color: var(--coral); }
-  .gate-btn[data-gate="CZ"].active     { box-shadow: 0 0 14px var(--violet-glow); border-color: var(--violet-bright); }
-  .gate-btn[data-gate="iSWAP"].active  { box-shadow: 0 0 14px rgba(244, 114, 182, 0.25); border-color: var(--magenta-bright); }
+  .gate-btn[data-gate="CTRL"].active   { box-shadow: 0 0 14px rgba(148, 163, 184, 0.25); border-color: var(--text-muted); }
   .gate-btn[data-gate="M"].active      { box-shadow: 0 0 14px rgba(148, 163, 184, 0.18); border-color: var(--text-muted); }
+
+  .gate-btn[draggable="true"] { cursor: grab; }
+  .gate-btn[draggable="true"]:active { cursor: grabbing; }
 
   /* ── Circuit canvas ───────────────────────────────────────────────── */
   .circuit-frame {
@@ -757,7 +756,7 @@
     </div>
     <div class="header-meta">
       <span class="live-dot"><span id="status">Initializing</span></span>
-      <span id="version">v0.2.2</span>
+      <span id="version">v0.3.0</span>
     </div>
   </header>
 
@@ -771,9 +770,7 @@
           <button class="gate-btn" data-gate="X">X</button>
           <button class="gate-btn" data-gate="Z">Z</button>
           <button class="gate-btn" data-gate="T">T</button>
-          <button class="gate-btn" data-gate="CNOT">CNOT</button>
-          <button class="gate-btn" data-gate="CZ">CZ</button>
-          <button class="gate-btn" data-gate="iSWAP">iSWAP</button>
+          <button class="gate-btn" data-gate="CTRL">●</button>
           <button class="gate-btn" data-gate="M">M</button>
         </div>
       </div>
@@ -783,7 +780,7 @@
         <div class="circuit-frame">
           <canvas id="circuit-canvas"></canvas>
         </div>
-        <p class="hint">Click a gate, then a wire position to place it. CNOT/CZ/iSWAP need two clicks. Right-click to remove.</p>
+        <p class="hint">Drag a gate onto the wire to place. Drag a placed gate to move, or off the canvas to remove. Drop a Control (●) in the same step as a gate to make it controlled.</p>
       </div>
 
       <div class="panel-section">
@@ -1084,8 +1081,8 @@
             an eerie drone. Pentatonic always sounds consonant.
           </li>
           <li>
-            <strong>iSWAP:</strong> Swaps two qubits and adds phase.
-            Listen for notes trading places.
+            <strong>Toffoli:</strong> Two controls plus an X (● + ● + X)
+            flips the target only when both controls are |1⟩. A 3-input AND.
           </li>
         </ul>
 
@@ -1113,19 +1110,9 @@
             <td>π/8 phase gate. A gentle Z. Subtle X-basis shifts.</td>
           </tr>
           <tr>
-            <td><span class="gate-ref" style="color:#ff6b6b;border-color:#ff6b6b">CNOT</span></td>
-            <td>2</td>
-            <td>Controlled-X. Creates entanglement from superposition.</td>
-          </tr>
-          <tr>
-            <td><span class="gate-ref" style="color:#a855f7;border-color:#a855f7">CZ</span></td>
-            <td>2</td>
-            <td>Controlled-Z. Phase flip when both qubits are |1⟩.</td>
-          </tr>
-          <tr>
-            <td><span class="gate-ref" style="color:#f472b6;border-color:#f472b6">iSWAP</span></td>
-            <td>2</td>
-            <td>Swaps two qubits and adds a phase of <em>i</em>.</td>
+            <td><span class="gate-ref" style="color:#94a3b8;border-color:#94a3b8">●</span></td>
+            <td>1</td>
+            <td>Control marker. Drop in the same step as another gate to make it controlled. Multiple controls in one step give multi-controlled gates (e.g. ● + ● + X = Toffoli).</td>
           </tr>
           <tr>
             <td><span class="gate-ref" style="color:#94a3b8;border-color:#94a3b8">M</span></td>
@@ -1133,6 +1120,26 @@
             <td>Measurement. Collapses a qubit, creating a mixed state.</td>
           </tr>
         </table>
+
+        <h2>Controlled Gates</h2>
+        <p>
+          Instead of dedicated CNOT/CZ gates, harmoniq uses a generic
+          <strong>control marker (●)</strong>. Drop a control on one wire and
+          any other gate on another wire <em>at the same step</em>, and the
+          control becomes a predicate for that gate. The control wire and
+          target gate are automatically connected with a vertical line.
+        </p>
+        <p>
+          This gives you any controlled gate without needing a separate type:
+        </p>
+        <ul>
+          <li><strong>● + X</strong> = CNOT (controlled-X, the standard entangler)</li>
+          <li><strong>● + Z</strong> = CZ (controlled phase flip)</li>
+          <li><strong>● + H</strong> = controlled Hadamard</li>
+          <li><strong>● + T</strong> = controlled π/8 phase</li>
+          <li><strong>● + ● + X</strong> = Toffoli (CCNOT, a universal classical gate)</li>
+          <li><strong>● + ● + ● + X</strong> = CCCNOT, and so on</li>
+        </ul>
 
         <h2>Quantum Forge</h2>
         <p>

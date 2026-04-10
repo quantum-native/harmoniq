@@ -4,18 +4,18 @@ const WIRE_Y_START = 40;
 const LABEL_W = 40;
 const GATE_RADIUS = 18;
 
-const SINGLE_QUBIT_GATES = ["H", "X", "Z", "T", "M"];
-const TWO_QUBIT_GATES = ["CNOT", "CZ", "iSWAP"];
+// All gates are single-cell. Controls are markers; non-control gates in the
+// same step become controlled by all controls in that step.
+const GATE_TYPES = ["H", "X", "Z", "T", "CTRL", "M"];
+const TARGETABLE = ["H", "X", "Z", "T"]; // can be controlled
 
 const GATE_COLORS = {
-  H: "#22d3ee",
-  X: "#ff6b6b",
-  Z: "#a855f7",
-  T: "#fbbf24",
-  M: "#64748b",
-  CNOT: "#ff6b6b",
-  CZ: "#a855f7",
-  iSWAP: "#f472b6",
+  H:    "#22d3ee",
+  X:    "#ff6b6b",
+  Z:    "#a855f7",
+  T:    "#fbbf24",
+  CTRL: "#94a3b8",
+  M:    "#64748b",
 };
 
 export function createCircuitEditor(canvas, onChange) {
@@ -23,12 +23,12 @@ export function createCircuitEditor(canvas, onChange) {
   let circuit = { steps: 12, numQubits: 3, gates: [] };
   let activeGate = "H";
   let playheadStep = -1;
-  let twoQubitPending = null;
+  let dragging = null; // { gate, startX, startY, currentX, currentY, removed }
+  let dropPreview = null; // { type, step, qubit }
 
   function wireY(qubit) {
     return WIRE_Y_START + qubit * CELL_H + CELL_H / 2;
   }
-
   function cellX(step) {
     return LABEL_W + step * CELL_W + CELL_W / 2;
   }
@@ -87,9 +87,55 @@ export function createCircuitEditor(canvas, onChange) {
       }
     }
 
-    // Gates
+    // Group gates by step for control connections
+    const stepGroups = new Map();
     for (const gate of circuit.gates) {
+      // Skip the gate currently being dragged so it doesn't render in place
+      if (dragging && gate === dragging.gate) continue;
+      if (!stepGroups.has(gate.step)) stepGroups.set(gate.step, []);
+      stepGroups.get(gate.step).push(gate);
+    }
+
+    // Draw connection lines (controls → targets in the same step)
+    for (const [step, gates] of stepGroups) {
+      const controls = gates.filter((g) => g.type === "CTRL");
+      const targets = gates.filter((g) => TARGETABLE.includes(g.type));
+      if (controls.length > 0 && (targets.length > 0 || controls.length > 1)) {
+        const allItems = [...controls, ...targets];
+        const minQ = Math.min(...allItems.map((g) => g.qubit));
+        const maxQ = Math.max(...allItems.map((g) => g.qubit));
+        if (minQ !== maxQ) {
+          const x = cellX(step);
+          ctx.strokeStyle = "#94a3b8";
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.moveTo(x, wireY(minQ));
+          ctx.lineTo(x, wireY(maxQ));
+          ctx.stroke();
+        }
+      }
+    }
+
+    // Draw each gate
+    for (const gate of circuit.gates) {
+      if (dragging && gate === dragging.gate) continue;
       drawGate(gate);
+    }
+
+    // Drop preview (from palette drag-over)
+    if (dropPreview) {
+      const x = cellX(dropPreview.step);
+      const y = wireY(dropPreview.qubit);
+      ctx.globalAlpha = 0.4;
+      drawGateAt(dropPreview.type, x, y);
+      ctx.globalAlpha = 1;
+    }
+
+    // Dragging existing gate (ghost at cursor)
+    if (dragging && dragging.currentX !== undefined) {
+      ctx.globalAlpha = 0.7;
+      drawGateAt(dragging.gate.type, dragging.currentX, dragging.currentY);
+      ctx.globalAlpha = 1;
     }
 
     // Playhead
@@ -104,30 +150,35 @@ export function createCircuitEditor(canvas, onChange) {
       ctx.stroke();
       ctx.setLineDash([]);
     }
-
-    // Pending two-qubit gate indicator
-    if (twoQubitPending) {
-      const x = cellX(twoQubitPending.step);
-      const y = wireY(twoQubitPending.qubit);
-      ctx.strokeStyle = GATE_COLORS[twoQubitPending.type];
-      ctx.lineWidth = 2;
-      ctx.setLineDash([3, 3]);
-      ctx.beginPath();
-      ctx.arc(x, y, GATE_RADIUS + 4, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.setLineDash([]);
-    }
   }
 
   function drawGate(gate) {
-    const color = GATE_COLORS[gate.type] || "#fff";
+    const x = cellX(gate.step);
+    const y = wireY(gate.qubit);
+    drawGateAt(gate.type, x, y);
+  }
 
-    if (gate.type === "M") {
-      // Measurement gate: meter symbol
-      const x = cellX(gate.step);
-      const y = wireY(gate.qubit);
+  function drawGateAt(type, x, y) {
+    const color = GATE_COLORS[type] || "#fff";
+
+    if (type === "CTRL") {
+      // Control marker: filled dot with subtle ring
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(x, y, 7, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1;
+      ctx.globalAlpha = 0.4;
+      ctx.beginPath();
+      ctx.arc(x, y, 11, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      return;
+    }
+
+    if (type === "M") {
       const r = GATE_RADIUS;
-
       ctx.fillStyle = color;
       ctx.globalAlpha = 0.15;
       ctx.fillRect(x - r, y - r, r * 2, r * 2);
@@ -135,113 +186,30 @@ export function createCircuitEditor(canvas, onChange) {
       ctx.strokeStyle = color;
       ctx.lineWidth = 1.5;
       ctx.strokeRect(x - r, y - r, r * 2, r * 2);
-
-      // Meter arc
       ctx.beginPath();
       ctx.arc(x, y + 4, r * 0.55, Math.PI, 0);
       ctx.stroke();
-      // Meter needle
       ctx.beginPath();
       ctx.moveTo(x, y + 4);
       ctx.lineTo(x + r * 0.35, y - r * 0.35);
       ctx.stroke();
-
-    } else if (SINGLE_QUBIT_GATES.includes(gate.type)) {
-      const x = cellX(gate.step);
-      const y = wireY(gate.qubit);
-
-      ctx.fillStyle = color;
-      ctx.globalAlpha = 0.15;
-      ctx.fillRect(x - GATE_RADIUS, y - GATE_RADIUS, GATE_RADIUS * 2, GATE_RADIUS * 2);
-      ctx.globalAlpha = 1;
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 1.5;
-      ctx.strokeRect(x - GATE_RADIUS, y - GATE_RADIUS, GATE_RADIUS * 2, GATE_RADIUS * 2);
-
-      ctx.fillStyle = color;
-      ctx.font = "bold 14px 'Chakra Petch', monospace";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText(gate.type, x, y);
-    } else if (gate.type === "CNOT") {
-      const x = cellX(gate.step);
-      const cy = wireY(gate.control);
-      const ty = wireY(gate.target);
-
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(x, cy);
-      ctx.lineTo(x, ty);
-      ctx.stroke();
-
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.arc(x, cy, 6, 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(x, ty, 12, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(x - 8, ty);
-      ctx.lineTo(x + 8, ty);
-      ctx.moveTo(x, ty - 8);
-      ctx.lineTo(x, ty + 8);
-      ctx.stroke();
-    } else if (gate.type === "CZ") {
-      const x = cellX(gate.step);
-      const y1 = wireY(gate.control);
-      const y2 = wireY(gate.target);
-
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(x, y1);
-      ctx.lineTo(x, y2);
-      ctx.stroke();
-
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.arc(x, y1, 6, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(x, y2, 6, 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.font = "bold 10px 'Chakra Petch', monospace";
-      ctx.textAlign = "center";
-      ctx.fillText("CZ", x, Math.min(y1, y2) - 14);
-    } else if (gate.type === "iSWAP") {
-      const x = cellX(gate.step);
-      const y1 = wireY(gate.qubit1);
-      const y2 = wireY(gate.qubit2);
-
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(x, y1);
-      ctx.lineTo(x, y2);
-      ctx.stroke();
-
-      const drawX = (y) => {
-        ctx.beginPath();
-        ctx.moveTo(x - 6, y - 6);
-        ctx.lineTo(x + 6, y + 6);
-        ctx.moveTo(x + 6, y - 6);
-        ctx.lineTo(x - 6, y + 6);
-        ctx.stroke();
-      };
-      drawX(y1);
-      drawX(y2);
-
-      ctx.fillStyle = color;
-      ctx.font = "bold 9px 'Chakra Petch', monospace";
-      ctx.textAlign = "center";
-      ctx.fillText("iS", x, Math.min(y1, y2) - 12);
+      return;
     }
+
+    // Single-qubit gate box (H, X, Z, T)
+    ctx.fillStyle = color;
+    ctx.globalAlpha = 0.15;
+    ctx.fillRect(x - GATE_RADIUS, y - GATE_RADIUS, GATE_RADIUS * 2, GATE_RADIUS * 2);
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(x - GATE_RADIUS, y - GATE_RADIUS, GATE_RADIUS * 2, GATE_RADIUS * 2);
+
+    ctx.fillStyle = color;
+    ctx.font = "bold 14px 'Chakra Petch', monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(type, x, y);
   }
 
   function hitTest(mx, my) {
@@ -258,71 +226,40 @@ export function createCircuitEditor(canvas, onChange) {
   }
 
   function findGateAt(step, qubit) {
-    return circuit.gates.findIndex((g) => {
-      if (g.step !== step) return false;
-      if (SINGLE_QUBIT_GATES.includes(g.type)) return g.qubit === qubit;
-      if (g.type === "CNOT" || g.type === "CZ")
-        return g.control === qubit || g.target === qubit;
-      if (g.type === "iSWAP")
-        return g.qubit1 === qubit || g.qubit2 === qubit;
-      return false;
-    });
+    return circuit.gates.findIndex(
+      (g) => g.step === step && g.qubit === qubit
+    );
   }
 
-  canvas.addEventListener("click", (e) => {
-    const rect = canvas.getBoundingClientRect();
-    const mx = e.clientX - rect.left;
-    const my = e.clientY - rect.top;
-    const hit = hitTest(mx, my);
-    if (!hit) {
-      twoQubitPending = null;
-      draw();
-      return;
-    }
+  function placeGate(type, step, qubit) {
+    if (!GATE_TYPES.includes(type)) return;
+    // Replace any existing gate at this cell
+    const existing = findGateAt(step, qubit);
+    if (existing >= 0) circuit.gates.splice(existing, 1);
+    circuit.gates.push({ type, qubit, step });
+    draw();
+    onChange();
+  }
 
-    const existingIdx = findGateAt(hit.step, hit.qubit);
-
-    if (TWO_QUBIT_GATES.includes(activeGate)) {
-      if (twoQubitPending && twoQubitPending.step === hit.step && twoQubitPending.qubit !== hit.qubit) {
-        circuit.gates = circuit.gates.filter(
-          (g) => !(g.step === hit.step && (
-            (SINGLE_QUBIT_GATES.includes(g.type) && (g.qubit === hit.qubit || g.qubit === twoQubitPending.qubit)) ||
-            ((g.type === "CNOT" || g.type === "CZ") && (g.control === hit.qubit || g.target === hit.qubit || g.control === twoQubitPending.qubit || g.target === twoQubitPending.qubit)) ||
-            (g.type === "iSWAP" && (g.qubit1 === hit.qubit || g.qubit2 === hit.qubit || g.qubit1 === twoQubitPending.qubit || g.qubit2 === twoQubitPending.qubit))
-          ))
-        );
-
-        if (activeGate === "CNOT" || activeGate === "CZ") {
-          circuit.gates.push({
-            type: activeGate,
-            control: twoQubitPending.qubit,
-            target: hit.qubit,
-            step: hit.step,
-          });
-        } else if (activeGate === "iSWAP") {
-          circuit.gates.push({
-            type: "iSWAP",
-            qubit1: twoQubitPending.qubit,
-            qubit2: hit.qubit,
-            step: hit.step,
-          });
-        }
-        twoQubitPending = null;
-        draw();
-        onChange();
-      } else {
-        twoQubitPending = { type: activeGate, qubit: hit.qubit, step: hit.step };
-        draw();
-      }
-    } else {
-      twoQubitPending = null;
-      if (existingIdx >= 0) {
-        circuit.gates.splice(existingIdx, 1);
-      } else {
-        circuit.gates.push({ type: activeGate, qubit: hit.qubit, step: hit.step });
-      }
+  function removeGate(gate) {
+    const idx = circuit.gates.indexOf(gate);
+    if (idx >= 0) {
+      circuit.gates.splice(idx, 1);
       draw();
       onChange();
+    }
+  }
+
+  // ── Click to place (legacy) and right-click to remove ──────────────
+  canvas.addEventListener("click", (e) => {
+    if (dragging) return; // suppress click after drag
+    const rect = canvas.getBoundingClientRect();
+    const hit = hitTest(e.clientX - rect.left, e.clientY - rect.top);
+    if (!hit) return;
+    const existing = findGateAt(hit.step, hit.qubit);
+    if (existing < 0) {
+      // Empty cell — place selected gate
+      placeGate(activeGate, hit.step, hit.qubit);
     }
   });
 
@@ -339,9 +276,122 @@ export function createCircuitEditor(canvas, onChange) {
     }
   });
 
+  // ── HTML5 drag and drop from palette ───────────────────────────────
+  canvas.addEventListener("dragover", (e) => {
+    if (!e.dataTransfer.types.includes("application/x-harmoniq-gate")) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+    const rect = canvas.getBoundingClientRect();
+    const hit = hitTest(e.clientX - rect.left, e.clientY - rect.top);
+    const type = window.__harmoniqDragType;
+    if (hit && type) {
+      dropPreview = { type, step: hit.step, qubit: hit.qubit };
+      draw();
+    }
+  });
+
+  canvas.addEventListener("dragleave", (e) => {
+    // Only clear if leaving the canvas entirely
+    const rect = canvas.getBoundingClientRect();
+    if (
+      e.clientX < rect.left ||
+      e.clientX > rect.right ||
+      e.clientY < rect.top ||
+      e.clientY > rect.bottom
+    ) {
+      dropPreview = null;
+      draw();
+    }
+  });
+
+  canvas.addEventListener("drop", (e) => {
+    e.preventDefault();
+    const type = e.dataTransfer.getData("application/x-harmoniq-gate") || window.__harmoniqDragType;
+    dropPreview = null;
+    if (!type) return;
+    const rect = canvas.getBoundingClientRect();
+    const hit = hitTest(e.clientX - rect.left, e.clientY - rect.top);
+    if (hit) {
+      placeGate(type, hit.step, hit.qubit);
+    } else {
+      draw();
+    }
+  });
+
+  // ── Mouse drag to move/remove existing gates ───────────────────────
+  let mouseDownGate = null;
+  let mouseDownPos = null;
+
+  canvas.addEventListener("mousedown", (e) => {
+    if (e.button !== 0) return;
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    const hit = hitTest(mx, my);
+    if (!hit) return;
+    const idx = findGateAt(hit.step, hit.qubit);
+    if (idx >= 0) {
+      mouseDownGate = circuit.gates[idx];
+      mouseDownPos = { x: e.clientX, y: e.clientY, mx, my };
+    }
+  });
+
+  window.addEventListener("mousemove", (e) => {
+    if (!mouseDownGate) return;
+    const dx = e.clientX - mouseDownPos.x;
+    const dy = e.clientY - mouseDownPos.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+
+    if (!dragging && dist > 5) {
+      dragging = { gate: mouseDownGate };
+    }
+    if (dragging) {
+      const rect = canvas.getBoundingClientRect();
+      dragging.currentX = e.clientX - rect.left;
+      dragging.currentY = e.clientY - rect.top;
+      draw();
+    }
+  });
+
+  window.addEventListener("mouseup", (e) => {
+    if (!mouseDownGate) return;
+    if (dragging) {
+      const rect = canvas.getBoundingClientRect();
+      const insideCanvas =
+        e.clientX >= rect.left &&
+        e.clientX <= rect.right &&
+        e.clientY >= rect.top &&
+        e.clientY <= rect.bottom;
+
+      if (insideCanvas) {
+        const hit = hitTest(e.clientX - rect.left, e.clientY - rect.top);
+        if (hit && (hit.step !== dragging.gate.step || hit.qubit !== dragging.gate.qubit)) {
+          // Move: remove any existing gate at the destination, then update position
+          const existing = findGateAt(hit.step, hit.qubit);
+          if (existing >= 0) circuit.gates.splice(existing, 1);
+          dragging.gate.step = hit.step;
+          dragging.gate.qubit = hit.qubit;
+          draw();
+          onChange();
+        } else {
+          draw();
+        }
+      } else {
+        // Dragged outside canvas — remove
+        removeGate(dragging.gate);
+      }
+      // Suppress the upcoming click event
+      setTimeout(() => { dragging = null; }, 0);
+    } else {
+      dragging = null;
+    }
+    mouseDownGate = null;
+    mouseDownPos = null;
+  });
+
+  // ── Public API ─────────────────────────────────────────────────────
   function setActiveGate(type) {
     activeGate = type;
-    twoQubitPending = null;
   }
 
   function setPlayheadPosition(step) {
@@ -351,12 +401,6 @@ export function createCircuitEditor(canvas, onChange) {
 
   function getCircuit() {
     return circuit;
-  }
-
-  function setSteps(n) {
-    circuit.steps = n;
-    draw();
-    onChange();
   }
 
   function addSteps(n) {
@@ -381,18 +425,8 @@ export function createCircuitEditor(canvas, onChange) {
 
   function removeQubit() {
     if (circuit.numQubits <= 1) return;
-    const removed = circuit.numQubits - 1;
     circuit.numQubits--;
-    // Remove gates that reference the removed qubit
-    circuit.gates = circuit.gates.filter((g) => {
-      if (SINGLE_QUBIT_GATES.includes(g.type)) return g.qubit < circuit.numQubits;
-      if (g.type === "CNOT" || g.type === "CZ")
-        return g.control < circuit.numQubits && g.target < circuit.numQubits;
-      if (g.type === "iSWAP")
-        return g.qubit1 < circuit.numQubits && g.qubit2 < circuit.numQubits;
-      return true;
-    });
-    twoQubitPending = null;
+    circuit.gates = circuit.gates.filter((g) => g.qubit < circuit.numQubits);
     draw();
     onChange();
   }
@@ -401,19 +435,28 @@ export function createCircuitEditor(canvas, onChange) {
     circuit.steps = newCircuit.steps;
     circuit.numQubits = newCircuit.numQubits || 3;
     circuit.gates = newCircuit.gates.map((g) => ({ ...g }));
-    twoQubitPending = null;
     draw();
     onChange();
   }
 
   function clear() {
     circuit.gates = [];
-    twoQubitPending = null;
     draw();
     onChange();
   }
 
   draw();
 
-  return { setActiveGate, setPlayheadPosition, getCircuit, setSteps, addSteps, removeStep, addQubit, removeQubit, loadCircuit, clear, draw };
+  return {
+    setActiveGate,
+    setPlayheadPosition,
+    getCircuit,
+    addSteps,
+    removeStep,
+    addQubit,
+    removeQubit,
+    loadCircuit,
+    clear,
+    draw,
+  };
 }

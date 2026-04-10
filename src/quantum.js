@@ -78,8 +78,8 @@ export function createQuantumEngine() {
 
     // Apply gates from (cachedStep + 1) to upToStep
     for (let step = cachedStep + 1; step <= upToStep && step < circuit.steps; step++) {
-      const gates = circuit.gates.filter((g) => g.step === step && g.type !== "M");
-      for (const gate of gates) applyGate(m, qubits, gate);
+      const stepGates = circuit.gates.filter((g) => g.step === step && g.type !== "M");
+      applyStep(m, qubits, stepGates);
     }
     cachedStep = upToStep;
 
@@ -153,8 +153,8 @@ export function createQuantumEngine() {
     let foIdx = 0;
 
     for (let step = 0; step <= upToStep && step < circuit.steps; step++) {
-      const gates = circuit.gates.filter((g) => g.step === step && g.type !== "M");
-      for (const gate of gates) applyGate(m, qubits, gate);
+      const stepGates = circuit.gates.filter((g) => g.step === step && g.type !== "M");
+      applyStep(m, qubits, stepGates);
 
       while (foIdx < forcedOutcomes.length && forcedOutcomes[foIdx].step === step) {
         const fo = forcedOutcomes[foIdx];
@@ -191,30 +191,35 @@ export function createQuantumEngine() {
 
 // --- Gate application ---
 
-function applyGate(m, qubits, gate) {
-  const q = (i) => qubits[i];
-  switch (gate.type) {
-    case "H":
-      m.hadamard(q(gate.qubit));
-      break;
-    case "X":
-      m.cycle(q(gate.qubit));
-      break;
-    case "Z":
-      m.clock(q(gate.qubit));
-      break;
-    case "T":
-      m.clock(q(gate.qubit), 0.25);
-      break;
-    case "CNOT":
-      m.cycle(q(gate.target), 1, [q(gate.control).is(1)]);
-      break;
-    case "CZ":
-      m.clock(q(gate.target), 1, [q(gate.control).is(1)]);
-      break;
-    case "iSWAP":
-      m.i_swap(q(gate.qubit1), q(gate.qubit2), 1);
-      break;
+/**
+ * Apply all gates at one circuit step. Controls in the step become predicates
+ * for every non-control gate at the same step. So:
+ *   CTRL(q0) + X(q1)            → CNOT (q0 controls q1)
+ *   CTRL(q0) + Z(q1)            → CZ
+ *   CTRL(q0) + CTRL(q1) + X(q2) → Toffoli
+ */
+function applyStep(m, qubits, gates) {
+  const controls = gates.filter((g) => g.type === "CTRL");
+  const predicates = controls.map((c) => qubits[c.qubit].is(1));
+  const useArg = predicates.length > 0 ? predicates : undefined;
+
+  for (const gate of gates) {
+    if (gate.type === "CTRL") continue;
+    const q = qubits[gate.qubit];
+    switch (gate.type) {
+      case "H":
+        m.hadamard(q, 1, useArg);
+        break;
+      case "X":
+        m.cycle(q, 1, useArg);
+        break;
+      case "Z":
+        m.clock(q, 1, useArg);
+        break;
+      case "T":
+        m.clock(q, 0.25, useArg);
+        break;
+    }
   }
 }
 

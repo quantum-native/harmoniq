@@ -45,12 +45,15 @@ const PRESETS = {
     ],
   },
   ghz: {
+    // H on q0, then CNOT q0→q1, then CNOT q0→q2
     steps: 4,
     numQubits: 3,
     gates: [
       { type: "H", qubit: 0, step: 0 },
-      { type: "CNOT", control: 0, target: 1, step: 1 },
-      { type: "CNOT", control: 0, target: 2, step: 2 },
+      { type: "CTRL", qubit: 0, step: 1 },
+      { type: "X", qubit: 1, step: 1 },
+      { type: "CTRL", qubit: 0, step: 2 },
+      { type: "X", qubit: 2, step: 2 },
     ],
   },
   product: {
@@ -72,12 +75,12 @@ const PRESETS = {
   classical: {
     // H + CNOT creates Bell state (entangled), then measurement collapses it
     // to a classically correlated mixture: 50% |00⟩ + 50% |11⟩
-    // High Z-correlation, zero entanglement
     steps: 4,
     numQubits: 3,
     gates: [
       { type: "H", qubit: 0, step: 0 },
-      { type: "CNOT", control: 0, target: 1, step: 1 },
+      { type: "CTRL", qubit: 0, step: 1 },
+      { type: "X", qubit: 1, step: 1 },
       { type: "M", qubit: 0, step: 2 },
     ],
   },
@@ -109,12 +112,27 @@ async function main() {
   const engine = createQuantumEngine();
   const editor = createCircuitEditor(circuitCanvas, onCircuitChange);
 
-  // Gate palette
+  // Gate palette: click to select, drag to place
   gateButtons.forEach((btn) => {
     btn.addEventListener("click", () => {
       gateButtons.forEach((b) => b.classList.remove("active"));
       btn.classList.add("active");
       editor.setActiveGate(btn.dataset.gate);
+    });
+
+    // HTML5 drag and drop
+    btn.setAttribute("draggable", "true");
+    btn.addEventListener("dragstart", (e) => {
+      const type = btn.dataset.gate;
+      e.dataTransfer.setData("application/x-harmoniq-gate", type);
+      e.dataTransfer.setData("text/plain", type);
+      e.dataTransfer.effectAllowed = "copy";
+      // Stash the type globally so dragover handlers can read it (dataTransfer
+      // is restricted during dragover for security reasons in some browsers)
+      window.__harmoniqDragType = type;
+    });
+    btn.addEventListener("dragend", () => {
+      window.__harmoniqDragType = null;
     });
   });
 
