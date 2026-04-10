@@ -2,5 +2,6 @@ node_modules/
 dist/
 .DS_Store
 .claude/
+.devportal/
 CLAUDE.md
 *.log
