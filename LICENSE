@@ -19,3 +19,29 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+================================================================================
+
+NOTICE: Third-Party Dependencies
+
+The MIT license above applies only to the harmoniq source code in this
+repository. Harmoniq depends on Quantum Forge (the `quantum-forge` npm
+package), which uses a split licensing model:
+
+- **Quantum Forge TypeScript/JavaScript source code** is MIT licensed.
+- **Quantum Forge compiled binaries** (the WebAssembly `.wasm` files and
+  related artifacts shipped inside the npm package) are proprietary. The
+  canonical terms live in `LICENSE-BINARY.md` inside the installed
+  `quantum-forge` package. Short version:
+    - Free for applications under $100K/year in revenue
+    - Attribution required: "Powered by Quantum Forge"
+    - No reverse engineering of compiled binaries
+    - Above $100K, contact hello@quantum.dev for a commercial license
+
+"Quantum Forge" and the Quantum Native logo are trademarks of Quantum Realm
+Games, LLC. The MIT license above grants rights to harmoniq's code only and
+does not grant any rights to those trademarks or to the Quantum Forge
+binaries.
+
+For full Quantum Forge licensing details, see:
+https://quantum.dev
