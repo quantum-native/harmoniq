@@ -8,14 +8,14 @@ const SINGLE_QUBIT_GATES = ["H", "X", "Z", "T", "M"];
 const TWO_QUBIT_GATES = ["CNOT", "CZ", "iSWAP"];
 
 const GATE_COLORS = {
-  H: "#4fc3f7",
-  X: "#ef5350",
-  Z: "#ab47bc",
-  T: "#ffb74d",
-  M: "#78909c",
-  CNOT: "#ef5350",
-  CZ: "#ab47bc",
-  iSWAP: "#66bb6a",
+  H: "#22d3ee",
+  X: "#ff6b6b",
+  Z: "#a855f7",
+  T: "#fbbf24",
+  M: "#64748b",
+  CNOT: "#ff6b6b",
+  CZ: "#a855f7",
+  iSWAP: "#f472b6",
 };
 
 export function createCircuitEditor(canvas, onChange) {
@@ -49,11 +49,11 @@ export function createCircuitEditor(canvas, onChange) {
     const h = canvas.height / devicePixelRatio;
     ctx.clearRect(0, 0, w, h);
 
-    ctx.fillStyle = "#1a1a2e";
+    ctx.fillStyle = "#0c1018";
     ctx.fillRect(0, 0, w, h);
 
     // Wires
-    ctx.strokeStyle = "#444";
+    ctx.strokeStyle = "#334155";
     ctx.lineWidth = 1.5;
     for (let q = 0; q < circuit.numQubits; q++) {
       const y = wireY(q);
@@ -62,23 +62,23 @@ export function createCircuitEditor(canvas, onChange) {
       ctx.lineTo(LABEL_W + circuit.steps * CELL_W, y);
       ctx.stroke();
 
-      ctx.fillStyle = "#888";
-      ctx.font = "13px monospace";
+      ctx.fillStyle = "#64748b";
+      ctx.font = "11px 'Chakra Petch', monospace";
       ctx.textAlign = "right";
       ctx.textBaseline = "middle";
       ctx.fillText(`q${q}`, LABEL_W - 6, y);
     }
 
     // Step numbers
-    ctx.fillStyle = "#555";
-    ctx.font = "10px monospace";
+    ctx.fillStyle = "#334155";
+    ctx.font = "9px 'Chakra Petch', monospace";
     ctx.textAlign = "center";
     for (let s = 0; s < circuit.steps; s++) {
       ctx.fillText(s, cellX(s), WIRE_Y_START - 8);
     }
 
     // Grid dots
-    ctx.fillStyle = "#2a2a4a";
+    ctx.fillStyle = "#182035";
     for (let s = 0; s < circuit.steps; s++) {
       for (let q = 0; q < circuit.numQubits; q++) {
         ctx.beginPath();
@@ -95,7 +95,7 @@ export function createCircuitEditor(canvas, onChange) {
     // Playhead
     if (playheadStep >= 0 && playheadStep < circuit.steps) {
       const x = cellX(playheadStep);
-      ctx.strokeStyle = "#ff5722";
+      ctx.strokeStyle = "#ff6b6b";
       ctx.lineWidth = 2;
       ctx.setLineDash([4, 3]);
       ctx.beginPath();
@@ -159,7 +159,7 @@ export function createCircuitEditor(canvas, onChange) {
       ctx.strokeRect(x - GATE_RADIUS, y - GATE_RADIUS, GATE_RADIUS * 2, GATE_RADIUS * 2);
 
       ctx.fillStyle = color;
-      ctx.font = "bold 16px monospace";
+      ctx.font = "bold 14px 'Chakra Petch', monospace";
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.fillText(gate.type, x, y);
@@ -211,7 +211,7 @@ export function createCircuitEditor(canvas, onChange) {
       ctx.arc(x, y2, 6, 0, Math.PI * 2);
       ctx.fill();
 
-      ctx.font = "bold 10px monospace";
+      ctx.font = "bold 10px 'Chakra Petch', monospace";
       ctx.textAlign = "center";
       ctx.fillText("CZ", x, Math.min(y1, y2) - 14);
     } else if (gate.type === "iSWAP") {
@@ -238,7 +238,7 @@ export function createCircuitEditor(canvas, onChange) {
       drawX(y2);
 
       ctx.fillStyle = color;
-      ctx.font = "bold 9px monospace";
+      ctx.font = "bold 9px 'Chakra Petch', monospace";
       ctx.textAlign = "center";
       ctx.fillText("iS", x, Math.min(y1, y2) - 12);
     }

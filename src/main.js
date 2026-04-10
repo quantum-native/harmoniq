@@ -259,19 +259,33 @@ async function main() {
     vizCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     vizCtx.clearRect(0, 0, w, h);
-    vizCtx.fillStyle = "#1a1a2e";
+    vizCtx.fillStyle = "#0c1018";
     vizCtx.fillRect(0, 0, w, h);
+
+    // Subtle baseline grid
+    vizCtx.strokeStyle = "#182035";
+    vizCtx.lineWidth = 0.5;
+    for (let i = 0; i <= 4; i++) {
+      const y = 30 + (140 / 4) * i;
+      vizCtx.beginPath();
+      vizCtx.moveTo(20, y);
+      vizCtx.lineTo(w - 20, y);
+      vizCtx.stroke();
+    }
 
     const startX = (w - totalW) / 2;
     const maxH = 140;
     const baseY = h - 30;
 
     const ap = audio.getParams();
-    vizCtx.fillStyle = "#888";
-    vizCtx.font = "11px monospace";
+    vizCtx.fillStyle = "#22d3ee";
+    vizCtx.globalAlpha = 0.8;
+    vizCtx.font = "10px 'Chakra Petch', monospace";
     vizCtx.textAlign = "center";
-    vizCtx.fillText(`Z-basis (${ap.zWaveform})`, w * 0.35, 14);
-    vizCtx.fillText(`X-basis (${ap.xWaveform})`, w * 0.7, 14);
+    vizCtx.fillText(`Z-BASIS — ${ap.zWaveform.toUpperCase()}`, w * 0.32, 16);
+    vizCtx.fillStyle = "#fbbf24";
+    vizCtx.fillText(`X-BASIS — ${ap.xWaveform.toUpperCase()}`, w * 0.68, 16);
+    vizCtx.globalAlpha = 1;
 
     const basisLabels = getBasisLabels(numQubits);
     const noteNames = getNoteNames(ap.scale, ap.rootOctave, numStates);
@@ -281,21 +295,27 @@ async function main() {
       const x = startX + i * (groupW + groupGap);
 
       const zH = zBasis[i] * maxH;
-      vizCtx.fillStyle = "#4fc3f7";
-      vizCtx.globalAlpha = 0.7;
+      // Z bar with glow
+      vizCtx.shadowColor = "#22d3ee";
+      vizCtx.shadowBlur = zBasis[i] > 0.05 ? 8 : 0;
+      vizCtx.fillStyle = "#22d3ee";
+      vizCtx.globalAlpha = 0.85;
       vizCtx.fillRect(x, baseY - zH, barW, zH);
-      vizCtx.globalAlpha = 1;
 
       const xH = xBasis[i] * maxH;
-      vizCtx.fillStyle = "#ffb74d";
-      vizCtx.globalAlpha = 0.7;
+      vizCtx.shadowColor = "#fbbf24";
+      vizCtx.shadowBlur = xBasis[i] > 0.05 ? 8 : 0;
+      vizCtx.fillStyle = "#fbbf24";
       vizCtx.fillRect(x + barW + gap, baseY - xH, barW, xH);
+
+      vizCtx.shadowBlur = 0;
       vizCtx.globalAlpha = 1;
 
-      vizCtx.fillStyle = "#666";
-      vizCtx.font = labelFont + " monospace";
+      vizCtx.fillStyle = "#475569";
+      vizCtx.font = labelFont + " 'Chakra Petch', monospace";
       vizCtx.textAlign = "center";
       vizCtx.fillText(basisLabels[i], x + groupW / 2, baseY + 11);
+      vizCtx.fillStyle = "#64748b";
       vizCtx.fillText(noteNames[i], x + groupW / 2, baseY + 21);
     }
   }
@@ -328,19 +348,19 @@ async function main() {
     analysers.master.getFloatTimeDomainData(masterData);
 
     wfCtx.clearRect(0, 0, WF_W, WF_H);
-    wfCtx.fillStyle = "#1a1a2e";
+    wfCtx.fillStyle = "#0c1018";
     wfCtx.fillRect(0, 0, WF_W, WF_H);
 
     const laneH = WF_H / 3;
 
-    wfCtx.font = "10px monospace";
+    wfCtx.font = "9px 'Chakra Petch', monospace";
     wfCtx.textAlign = "left";
 
-    drawWave(zData, bufLen, 0, laneH, "#4fc3f7", "Z-basis");
-    drawWave(xData, bufLen, laneH, laneH, "#ffb74d", "X-basis");
-    drawWave(masterData, bufLen, laneH * 2, laneH, "#8a8a9a", "mixed");
+    drawWave(zData, bufLen, 0, laneH, "#22d3ee", "Z-BASIS");
+    drawWave(xData, bufLen, laneH, laneH, "#fbbf24", "X-BASIS");
+    drawWave(masterData, bufLen, laneH * 2, laneH, "#94a3b8", "MIXED OUT");
 
-    wfCtx.strokeStyle = "#222";
+    wfCtx.strokeStyle = "#182035";
     wfCtx.lineWidth = 0.5;
     for (let i = 1; i < 3; i++) {
       wfCtx.beginPath();
@@ -353,7 +373,7 @@ async function main() {
   function drawWave(data, bufLen, yOffset, height, color, label) {
     const midY = yOffset + height / 2;
 
-    wfCtx.strokeStyle = "#1f1f35";
+    wfCtx.strokeStyle = "#182035";
     wfCtx.lineWidth = 0.5;
     wfCtx.beginPath();
     wfCtx.moveTo(0, midY);
@@ -361,13 +381,15 @@ async function main() {
     wfCtx.stroke();
 
     wfCtx.fillStyle = color;
-    wfCtx.globalAlpha = 0.5;
-    wfCtx.fillText(label, 6, yOffset + 12);
+    wfCtx.globalAlpha = 0.45;
+    wfCtx.fillText(label, 8, yOffset + 13);
     wfCtx.globalAlpha = 1;
 
     wfCtx.strokeStyle = color;
-    wfCtx.lineWidth = 1.2;
-    wfCtx.globalAlpha = 0.8;
+    wfCtx.shadowColor = color;
+    wfCtx.shadowBlur = 4;
+    wfCtx.lineWidth = 1.4;
+    wfCtx.globalAlpha = 0.9;
     wfCtx.beginPath();
 
     const step = bufLen / WF_W;
@@ -379,6 +401,7 @@ async function main() {
       else wfCtx.lineTo(i, y);
     }
     wfCtx.stroke();
+    wfCtx.shadowBlur = 0;
     wfCtx.globalAlpha = 1;
   }
 
