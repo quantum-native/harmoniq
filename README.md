@@ -25,16 +25,14 @@ All quantum simulation runs through [Quantum Forge](https://quantum.dev) via the
 
 ### Per-step evaluation
 
-Every time the playhead advances, harmoniq creates a fresh `QuantumPropertyManager` and replays the circuit from scratch:
+A single `QuantumPropertyManager` lives for the lifetime of the engine. As the playhead advances, the engine applies new gates incrementally; on loop, qubit reset, or circuit edit, properties are released back to the pool (which resets them to |0⟩) and re-acquired.
 
 1. `manager.acquireProperty()` allocates n qubit properties, each starting in |0⟩
-2. Gates are applied via the WASM module (`manager.getModule()`):
-   - `m.hadamard(prop)` -- H gate
-   - `m.cycle(prop)` -- X gate
-   - `m.clock(prop)` / `m.clock(prop, 0.25)` -- Z and T gates
-   - `m.cycle(target, 1, [control.is(1)])` -- CNOT (predicated X)
-   - `m.clock(target, 1, [control.is(1)])` -- CZ (predicated Z)
-   - `m.i_swap(p1, p2, 1)` -- iSWAP
+2. For each circuit step, gates are batched and applied via the WASM module (`manager.getModule()`). Controls in the same step become predicates for every non-control gate at that step:
+   - `m.hadamard(prop, 1, predicates)` -- H (controlled if predicates present)
+   - `m.cycle(prop, 1, predicates)` -- X
+   - `m.clock(prop, 1, predicates)` -- Z
+   - `m.clock(prop, 0.25, predicates)` -- T (π/8 phase)
 3. `m.probabilities(qubits)` reads the Z-basis probability distribution without collapsing the state
 4. Hadamard is applied to all qubits, probabilities are read again (X-basis), then undone with `m.inverse_hadamard()`
 5. `m.reduced_density_matrix(qubits)` extracts the full density matrix, from which harmoniq reconstructs the state vector
@@ -47,13 +45,6 @@ npm install
 npm run dev
 ```
 
-## Deployment
+## Contributing
 
-Tagged releases (`v*`) trigger a GitHub Actions workflow that builds and deploys to Cloudflare Pages via wrangler.
-
-```
-git tag v0.1.0
-git push origin v0.1.0
-```
-
-Requires `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` as repository secrets.
+Contributions are welcome via pull request. Please open an issue first for anything substantial so we can discuss the approach. The `main` branch is protected — direct pushes are disabled, and changes land via PR after CI passes.
