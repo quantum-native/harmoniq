@@ -6,10 +6,42 @@ const GATE_RADIUS = 18;
 
 // All gates are single-cell. Controls are markers; non-control gates in the
 // same step become controlled by all controls in that step.
-const GATE_TYPES = ["H", "X", "Z", "T", "CTRL", "M"];
-const TARGETABLE = ["H", "X", "Z", "T"]; // can be controlled
+const GATE_TYPES = ["H", "X", "Z", "T", "CTRL", "M"] as const;
+const TARGETABLE = ["H", "X", "Z", "T"] as const; // can be controlled
 
-const GATE_COLORS = {
+export type GateKind = (typeof GATE_TYPES)[number];
+
+export interface Gate {
+  type: GateKind;
+  qubit: number;
+  step: number;
+}
+
+export interface CircuitStep {
+  step: number;
+  gates: Gate[];
+}
+
+export interface Circuit {
+  steps: number;
+  numQubits: number;
+  gates: Gate[];
+}
+
+export interface CircuitEditor {
+  setActiveGate(type: GateKind): void;
+  setPlayheadPosition(step: number): void;
+  getCircuit(): Circuit;
+  addSteps(n: number): void;
+  removeStep(): void;
+  addQubit(): void;
+  removeQubit(): void;
+  loadCircuit(newCircuit: Circuit): void;
+  clear(): void;
+  draw(): void;
+}
+
+const GATE_COLORS: Record<GateKind, string> = {
   H:    "#22d3ee",
   X:    "#ff6b6b",
   Z:    "#a855f7",
@@ -18,18 +50,59 @@ const GATE_COLORS = {
   M:    "#64748b",
 };
 
-export function createCircuitEditor(canvas, onChange) {
-  const ctx = canvas.getContext("2d");
-  let circuit = { steps: 12, numQubits: 3, gates: [] };
-  let activeGate = "H";
-  let playheadStep = -1;
-  let dragging = null; // { gate, startX, startY, currentX, currentY, removed }
-  let dropPreview = null; // { type, step, qubit }
+interface DropPreview {
+  type: GateKind;
+  step: number;
+  qubit: number;
+}
 
-  function wireY(qubit) {
+interface DragState {
+  gate: Gate;
+  currentX?: number;
+  currentY?: number;
+}
+
+interface MouseDownPos {
+  x: number;
+  y: number;
+  mx: number;
+  my: number;
+}
+
+interface HitCell {
+  step: number;
+  qubit: number;
+}
+
+declare global {
+  interface Window {
+    __harmoniqDragType?: GateKind | null;
+  }
+}
+
+function isGateKind(value: unknown): value is GateKind {
+  return typeof value === "string" && (GATE_TYPES as readonly string[]).includes(value);
+}
+
+export function createCircuitEditor(
+  canvas: HTMLCanvasElement,
+  onChange: () => void,
+): CircuitEditor {
+  const ctx: CanvasRenderingContext2D = (() => {
+    const c = canvas.getContext("2d");
+    if (!c) throw new Error("circuit: 2D canvas context unavailable");
+    return c;
+  })();
+  let circuit: Circuit = { steps: 12, numQubits: 3, gates: [] };
+  let activeGate: GateKind = "H";
+  let playheadStep = -1;
+  let dragging: DragState | null = null; // { gate, startX, startY, currentX, currentY, removed }
+  let dropPreview: DropPreview | null = null; // { type, step, qubit }
+
+  function wireY(qubit: number): number {
     return WIRE_Y_START + qubit * CELL_H + CELL_H / 2;
   }
-  function cellX(step) {
+  function cellX(step: number): number {
     return LABEL_W + step * CELL_W + CELL_W / 2;
   }
 
@@ -74,7 +147,7 @@ export function createCircuitEditor(canvas, onChange) {
     ctx.font = "9px 'Chakra Petch', monospace";
     ctx.textAlign = "center";
     for (let s = 0; s < circuit.steps; s++) {
-      ctx.fillText(s, cellX(s), WIRE_Y_START - 8);
+      ctx.fillText(String(s), cellX(s), WIRE_Y_START - 8);
     }
 
     // Grid dots
@@ -88,18 +161,22 @@ export function createCircuitEditor(canvas, onChange) {
     }
 
     // Group gates by step for control connections
-    const stepGroups = new Map();
+    const stepGroups = new Map<number, Gate[]>();
     for (const gate of circuit.gates) {
       // Skip the gate currently being dragged so it doesn't render in place
       if (dragging && gate === dragging.gate) continue;
-      if (!stepGroups.has(gate.step)) stepGroups.set(gate.step, []);
-      stepGroups.get(gate.step).push(gate);
+      let bucket = stepGroups.get(gate.step);
+      if (!bucket) {
+        bucket = [];
+        stepGroups.set(gate.step, bucket);
+      }
+      bucket.push(gate);
     }
 
     // Draw connection lines (controls → targets in the same step)
     for (const [step, gates] of stepGroups) {
       const controls = gates.filter((g) => g.type === "CTRL");
-      const targets = gates.filter((g) => TARGETABLE.includes(g.type));
+      const targets = gates.filter((g) => (TARGETABLE as readonly GateKind[]).includes(g.type));
       if (controls.length > 0 && (targets.length > 0 || controls.length > 1)) {
         const allItems = [...controls, ...targets];
         const minQ = Math.min(...allItems.map((g) => g.qubit));
@@ -132,7 +209,7 @@ export function createCircuitEditor(canvas, onChange) {
     }
 
     // Dragging existing gate (ghost at cursor)
-    if (dragging && dragging.currentX !== undefined) {
+    if (dragging && dragging.currentX !== undefined && dragging.currentY !== undefined) {
       ctx.globalAlpha = 0.7;
       drawGateAt(dragging.gate.type, dragging.currentX, dragging.currentY);
       ctx.globalAlpha = 1;
@@ -152,13 +229,13 @@ export function createCircuitEditor(canvas, onChange) {
     }
   }
 
-  function drawGate(gate) {
+  function drawGate(gate: Gate) {
     const x = cellX(gate.step);
     const y = wireY(gate.qubit);
     drawGateAt(gate.type, x, y);
   }
 
-  function drawGateAt(type, x, y) {
+  function drawGateAt(type: GateKind, x: number, y: number) {
     const color = GATE_COLORS[type] || "#fff";
 
     if (type === "CTRL") {
@@ -212,7 +289,7 @@ export function createCircuitEditor(canvas, onChange) {
     ctx.fillText(type, x, y);
   }
 
-  function hitTest(mx, my) {
+  function hitTest(mx: number, my: number): HitCell | null {
     for (let s = 0; s < circuit.steps; s++) {
       for (let q = 0; q < circuit.numQubits; q++) {
         const cx = cellX(s);
@@ -225,14 +302,14 @@ export function createCircuitEditor(canvas, onChange) {
     return null;
   }
 
-  function findGateAt(step, qubit) {
+  function findGateAt(step: number, qubit: number): number {
     return circuit.gates.findIndex(
       (g) => g.step === step && g.qubit === qubit
     );
   }
 
-  function placeGate(type, step, qubit) {
-    if (!GATE_TYPES.includes(type)) return;
+  function placeGate(type: GateKind, step: number, qubit: number) {
+    if (!(GATE_TYPES as readonly string[]).includes(type)) return;
     // Replace any existing gate at this cell
     const existing = findGateAt(step, qubit);
     if (existing >= 0) circuit.gates.splice(existing, 1);
@@ -241,7 +318,7 @@ export function createCircuitEditor(canvas, onChange) {
     onChange();
   }
 
-  function removeGate(gate) {
+  function removeGate(gate: Gate) {
     const idx = circuit.gates.indexOf(gate);
     if (idx >= 0) {
       circuit.gates.splice(idx, 1);
@@ -278,7 +355,7 @@ export function createCircuitEditor(canvas, onChange) {
 
   // ── HTML5 drag and drop from palette ───────────────────────────────
   canvas.addEventListener("dragover", (e) => {
-    if (!e.dataTransfer.types.includes("application/x-harmoniq-gate")) return;
+    if (!e.dataTransfer || !e.dataTransfer.types.includes("application/x-harmoniq-gate")) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = "copy";
     const rect = canvas.getBoundingClientRect();
@@ -306,9 +383,10 @@ export function createCircuitEditor(canvas, onChange) {
 
   canvas.addEventListener("drop", (e) => {
     e.preventDefault();
-    const type = e.dataTransfer.getData("application/x-harmoniq-gate") || window.__harmoniqDragType;
+    const raw = e.dataTransfer?.getData("application/x-harmoniq-gate") || window.__harmoniqDragType;
     dropPreview = null;
-    if (!type) return;
+    if (!raw || !isGateKind(raw)) return;
+    const type: GateKind = raw;
     const rect = canvas.getBoundingClientRect();
     const hit = hitTest(e.clientX - rect.left, e.clientY - rect.top);
     if (hit) {
@@ -319,8 +397,8 @@ export function createCircuitEditor(canvas, onChange) {
   });
 
   // ── Mouse drag to move/remove existing gates ───────────────────────
-  let mouseDownGate = null;
-  let mouseDownPos = null;
+  let mouseDownGate: Gate | null = null;
+  let mouseDownPos: MouseDownPos | null = null;
 
   canvas.addEventListener("mousedown", (e) => {
     if (e.button !== 0) return;
@@ -331,13 +409,15 @@ export function createCircuitEditor(canvas, onChange) {
     if (!hit) return;
     const idx = findGateAt(hit.step, hit.qubit);
     if (idx >= 0) {
-      mouseDownGate = circuit.gates[idx];
+      const found = circuit.gates[idx];
+      if (!found) return;
+      mouseDownGate = found;
       mouseDownPos = { x: e.clientX, y: e.clientY, mx, my };
     }
   });
 
   window.addEventListener("mousemove", (e) => {
-    if (!mouseDownGate) return;
+    if (!mouseDownGate || !mouseDownPos) return;
     const dx = e.clientX - mouseDownPos.x;
     const dy = e.clientY - mouseDownPos.y;
     const dist = Math.sqrt(dx * dx + dy * dy);
@@ -390,20 +470,20 @@ export function createCircuitEditor(canvas, onChange) {
   });
 
   // ── Public API ─────────────────────────────────────────────────────
-  function setActiveGate(type) {
+  function setActiveGate(type: GateKind) {
     activeGate = type;
   }
 
-  function setPlayheadPosition(step) {
+  function setPlayheadPosition(step: number) {
     playheadStep = step;
     draw();
   }
 
-  function getCircuit() {
+  function getCircuit(): Circuit {
     return circuit;
   }
 
-  function addSteps(n) {
+  function addSteps(n: number) {
     circuit.steps += n;
     draw();
   }
@@ -431,7 +511,7 @@ export function createCircuitEditor(canvas, onChange) {
     onChange();
   }
 
-  function loadCircuit(newCircuit) {
+  function loadCircuit(newCircuit: Circuit) {
     circuit.steps = newCircuit.steps;
     circuit.numQubits = newCircuit.numQubits || 3;
     circuit.gates = newCircuit.gates.map((g) => ({ ...g }));
