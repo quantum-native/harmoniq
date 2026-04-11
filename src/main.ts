@@ -1,27 +1,46 @@
 import { initQuantum, createQuantumEngine } from "./quantum.js";
+import type { Complex, MixedBranch, Measures } from "./quantum.js";
 import { createAudioEngine, getNoteNames, getBasisLabels, getKets } from "./audio.js";
 import { createCircuitEditor } from "./circuit.js";
+import type { Circuit, Gate, GateKind } from "./circuit.js";
 
-const status = document.getElementById("status");
-const circuitCanvas = document.getElementById("circuit-canvas");
-const vizCanvas = document.getElementById("viz-canvas");
-const waveformCanvas = document.getElementById("waveform-canvas");
-const statevectorEl = document.getElementById("statevector");
-const playBtn = document.getElementById("play-btn");
-const speedSlider = document.getElementById("speed-slider");
-const speedLabel = document.getElementById("speed-label");
-const gateButtons = document.querySelectorAll(".gate-btn");
-const addStepsBtn = document.getElementById("add-steps-btn");
-const removeStepsBtn = document.getElementById("remove-steps-btn");
-const addQubitBtn = document.getElementById("add-qubit-btn");
-const removeQubitBtn = document.getElementById("remove-qubit-btn");
-const clearBtn = document.getElementById("clear-btn");
-const presetButtons = document.querySelectorAll(".preset-btn");
+function byId<T extends HTMLElement>(id: string): T {
+  const el = document.getElementById(id);
+  if (!el) throw new Error(`main: missing element #${id}`);
+  return el as T;
+}
+
+function isGateKind(v: string | undefined): v is GateKind {
+  return (
+    v === "H" ||
+    v === "X" ||
+    v === "Z" ||
+    v === "T" ||
+    v === "CTRL" ||
+    v === "M"
+  );
+}
+
+const status = byId<HTMLElement>("status");
+const circuitCanvas = byId<HTMLCanvasElement>("circuit-canvas");
+const vizCanvas = byId<HTMLCanvasElement>("viz-canvas");
+const waveformCanvas = byId<HTMLCanvasElement>("waveform-canvas");
+const statevectorEl = byId<HTMLElement>("statevector");
+const playBtn = byId<HTMLButtonElement>("play-btn");
+const speedSlider = byId<HTMLInputElement>("speed-slider");
+const speedLabel = byId<HTMLElement>("speed-label");
+const gateButtons = document.querySelectorAll<HTMLButtonElement>(".gate-btn");
+const addStepsBtn = byId<HTMLButtonElement>("add-steps-btn");
+const removeStepsBtn = byId<HTMLButtonElement>("remove-steps-btn");
+const addQubitBtn = byId<HTMLButtonElement>("add-qubit-btn");
+const removeQubitBtn = byId<HTMLButtonElement>("remove-qubit-btn");
+const clearBtn = byId<HTMLButtonElement>("clear-btn");
+const presetButtons = document.querySelectorAll<HTMLButtonElement>(".preset-btn");
 
 // Generate X gates to increment a binary counter from state i to state i+1
-function makeScaleGates(n) {
+function makeScaleGates(n: number): Gate[] {
   const numStates = 1 << n;
-  const gates = [];
+  const gates: Gate[] = [];
   for (let i = 0; i < numStates - 1; i++) {
     const diff = i ^ (i + 1); // bits that flip
     for (let b = 0; b < n; b++) {
@@ -33,7 +52,7 @@ function makeScaleGates(n) {
   return gates;
 }
 
-const PRESETS = {
+const PRESETS: Record<string, Circuit> = {
   superposition: {
     steps: 2,
     numQubits: 3,
@@ -88,19 +107,20 @@ const PRESETS = {
 let playing = false;
 let playheadStep = 0;
 let lastStepTime = 0;
-let animId = null;
+let animId: number | null = null;
 
-function getStepInterval() {
+function getStepInterval(): number {
   return 1000 / parseFloat(speedSlider.value);
 }
 
-async function main() {
+async function main(): Promise<void> {
   status.textContent = "Loading quantum forge...";
 
   try {
     await initQuantum();
   } catch (err) {
-    status.textContent = "Failed to load quantum forge: " + err.message;
+    const msg = err instanceof Error ? err.message : String(err);
+    status.textContent = "Failed to load quantum forge: " + msg;
     console.error(err);
     return;
   }
@@ -116,13 +136,17 @@ async function main() {
     btn.addEventListener("click", () => {
       gateButtons.forEach((b) => b.classList.remove("active"));
       btn.classList.add("active");
-      editor.setActiveGate(btn.dataset.gate);
+      const gate = btn.dataset.gate;
+      if (isGateKind(gate)) {
+        editor.setActiveGate(gate);
+      }
     });
 
     // HTML5 drag and drop
     btn.setAttribute("draggable", "true");
     btn.addEventListener("dragstart", (e) => {
       const type = btn.dataset.gate;
+      if (!e.dataTransfer || !isGateKind(type)) return;
       e.dataTransfer.setData("application/x-harmoniq-gate", type);
       e.dataTransfer.setData("text/plain", type);
       e.dataTransfer.effectAllowed = "copy";
@@ -149,7 +173,9 @@ async function main() {
 
   presetButtons.forEach((btn) => {
     btn.addEventListener("click", () => {
-      const preset = PRESETS[btn.dataset.preset];
+      const key = btn.dataset.preset;
+      if (!key) return;
+      const preset = PRESETS[key];
       if (preset) {
         editor.loadCircuit(preset);
         syncQubitCount();
@@ -168,28 +194,30 @@ async function main() {
 
   // Sound controls
   function syncAudioParams() {
+    const zWave = byId<HTMLSelectElement>("ctrl-z-wave").value as OscillatorType;
+    const xWave = byId<HTMLSelectElement>("ctrl-x-wave").value as OscillatorType;
     audio.setParams({
-      zWaveform: document.getElementById("ctrl-z-wave").value,
-      xWaveform: document.getElementById("ctrl-x-wave").value,
-      scale: document.getElementById("ctrl-scale").value,
-      rootOctave: parseInt(document.getElementById("ctrl-octave").value),
-      xOctaveOffset: parseInt(document.getElementById("ctrl-x-oct-offset").value),
-      decay: parseFloat(document.getElementById("ctrl-decay").value),
-      reverb: parseFloat(document.getElementById("ctrl-reverb").value),
-      zVolume: parseFloat(document.getElementById("ctrl-z-vol").value),
-      xVolume: parseFloat(document.getElementById("ctrl-x-vol").value),
-      masterVolume: parseFloat(document.getElementById("ctrl-master").value),
+      zWaveform: zWave,
+      xWaveform: xWave,
+      scale: byId<HTMLSelectElement>("ctrl-scale").value,
+      rootOctave: parseInt(byId<HTMLSelectElement>("ctrl-octave").value),
+      xOctaveOffset: parseInt(byId<HTMLSelectElement>("ctrl-x-oct-offset").value),
+      decay: parseFloat(byId<HTMLInputElement>("ctrl-decay").value),
+      reverb: parseFloat(byId<HTMLInputElement>("ctrl-reverb").value),
+      zVolume: parseFloat(byId<HTMLInputElement>("ctrl-z-vol").value),
+      xVolume: parseFloat(byId<HTMLInputElement>("ctrl-x-vol").value),
+      masterVolume: parseFloat(byId<HTMLInputElement>("ctrl-master").value),
     });
-    const d = parseFloat(document.getElementById("ctrl-decay").value);
-    document.getElementById("ctrl-decay-val").textContent = d === 0 ? "off" : Math.round(d * 100) + "%";
-    document.getElementById("ctrl-reverb-val").textContent = Math.round(parseFloat(document.getElementById("ctrl-reverb").value) * 100) + "%";
-    document.getElementById("ctrl-z-vol-val").textContent = Math.round(parseFloat(document.getElementById("ctrl-z-vol").value) * 100) + "%";
-    document.getElementById("ctrl-x-vol-val").textContent = Math.round(parseFloat(document.getElementById("ctrl-x-vol").value) * 100) + "%";
-    document.getElementById("ctrl-master-val").textContent = Math.round(parseFloat(document.getElementById("ctrl-master").value) * 100) + "%";
+    const d = parseFloat(byId<HTMLInputElement>("ctrl-decay").value);
+    byId<HTMLElement>("ctrl-decay-val").textContent = d === 0 ? "off" : Math.round(d * 100) + "%";
+    byId<HTMLElement>("ctrl-reverb-val").textContent = Math.round(parseFloat(byId<HTMLInputElement>("ctrl-reverb").value) * 100) + "%";
+    byId<HTMLElement>("ctrl-z-vol-val").textContent = Math.round(parseFloat(byId<HTMLInputElement>("ctrl-z-vol").value) * 100) + "%";
+    byId<HTMLElement>("ctrl-x-vol-val").textContent = Math.round(parseFloat(byId<HTMLInputElement>("ctrl-x-vol").value) * 100) + "%";
+    byId<HTMLElement>("ctrl-master-val").textContent = Math.round(parseFloat(byId<HTMLInputElement>("ctrl-master").value) * 100) + "%";
   }
 
-  document.getElementById("sound-controls").addEventListener("input", syncAudioParams);
-  document.getElementById("sound-controls").addEventListener("change", syncAudioParams);
+  byId<HTMLElement>("sound-controls").addEventListener("input", syncAudioParams);
+  byId<HTMLElement>("sound-controls").addEventListener("change", syncAudioParams);
 
   // Transport
   function startPlayback() {
@@ -209,7 +237,7 @@ async function main() {
     if (!playing) return;
     playing = false;
     audio.stop();
-    if (animId) cancelAnimationFrame(animId);
+    if (animId !== null) cancelAnimationFrame(animId);
     editor.setPlayheadPosition(-1);
     status.textContent = "Ready";
     playBtn.textContent = "▶ Play";
@@ -244,7 +272,8 @@ async function main() {
       drawMeasures(result.measures);
     } catch (err) {
       console.error("Evaluation error:", err);
-      status.textContent = "Error: " + err.message;
+      const msg = err instanceof Error ? err.message : String(err);
+      status.textContent = "Error: " + msg;
     }
   }
 
@@ -267,13 +296,17 @@ async function main() {
   }
 
   // Probability visualization
-  const vizCtx = vizCanvas.getContext("2d");
+  const vizCtx: CanvasRenderingContext2D = (() => {
+    const c = vizCanvas.getContext("2d");
+    if (!c) throw new Error("main: viz canvas 2D context unavailable");
+    return c;
+  })();
 
-  function drawViz(zBasis, xBasis, numQubits) {
+  function drawViz(zBasis: number[], xBasis: number[], numQubits: number) {
     const numStates = 1 << numQubits;
     const dpr = devicePixelRatio;
     // Fit to container width
-    const containerW = vizCanvas.parentElement.clientWidth;
+    const containerW = vizCanvas.parentElement?.clientWidth ?? 0;
     const w = Math.max(360, containerW);
     const h = 220;
 
@@ -327,17 +360,20 @@ async function main() {
     for (let i = 0; i < numStates; i++) {
       const x = startX + i * (groupW + groupGap);
 
-      const zH = zBasis[i] * maxH;
+      const zProb = zBasis[i] ?? 0;
+      const xProb = xBasis[i] ?? 0;
+
+      const zH = zProb * maxH;
       // Z bar with glow
       vizCtx.shadowColor = "#22d3ee";
-      vizCtx.shadowBlur = zBasis[i] > 0.05 ? 8 : 0;
+      vizCtx.shadowBlur = zProb > 0.05 ? 8 : 0;
       vizCtx.fillStyle = "#22d3ee";
       vizCtx.globalAlpha = 0.85;
       vizCtx.fillRect(x, baseY - zH, barW, zH);
 
-      const xH = xBasis[i] * maxH;
+      const xH = xProb * maxH;
       vizCtx.shadowColor = "#fbbf24";
-      vizCtx.shadowBlur = xBasis[i] > 0.05 ? 8 : 0;
+      vizCtx.shadowBlur = xProb > 0.05 ? 8 : 0;
       vizCtx.fillStyle = "#fbbf24";
       vizCtx.fillRect(x + barW + gap, baseY - xH, barW, xH);
 
@@ -347,20 +383,24 @@ async function main() {
       vizCtx.fillStyle = "#475569";
       vizCtx.font = labelFont + " 'Chakra Petch', monospace";
       vizCtx.textAlign = "center";
-      vizCtx.fillText(basisLabels[i], x + groupW / 2, baseY + 11);
+      vizCtx.fillText(basisLabels[i] ?? "", x + groupW / 2, baseY + 11);
       vizCtx.fillStyle = "#64748b";
-      vizCtx.fillText(noteNames[i], x + groupW / 2, baseY + 21);
+      vizCtx.fillText(noteNames[i] ?? "", x + groupW / 2, baseY + 21);
     }
   }
 
   // Waveform visualization
-  const wfCtx = waveformCanvas.getContext("2d");
+  const wfCtx: CanvasRenderingContext2D = (() => {
+    const c = waveformCanvas.getContext("2d");
+    if (!c) throw new Error("main: waveform canvas 2D context unavailable");
+    return c;
+  })();
   let WF_W = 480;
   const WF_H = 200;
 
   function setupWaveformCanvas() {
     const dpr = devicePixelRatio;
-    WF_W = waveformCanvas.parentElement.clientWidth || 480;
+    WF_W = waveformCanvas.parentElement?.clientWidth || 480;
     waveformCanvas.width = WF_W * dpr;
     waveformCanvas.height = WF_H * dpr;
     waveformCanvas.style.width = WF_W + "px";
@@ -374,7 +414,7 @@ async function main() {
   });
 
   function drawWaveforms() {
-    if (waveformCanvas.parentElement.clientWidth !== WF_W) {
+    if ((waveformCanvas.parentElement?.clientWidth ?? WF_W) !== WF_W) {
       setupWaveformCanvas();
     }
 
@@ -388,9 +428,9 @@ async function main() {
     wfCtx.textAlign = "left";
 
     const analysers = audio.getAnalysers();
-    const hasAnalysers = analysers.z && analysers.x;
+    const hasAnalysers = analysers.z && analysers.x && analysers.master;
 
-    if (hasAnalysers) {
+    if (hasAnalysers && analysers.z && analysers.x && analysers.master) {
       const bufLen = analysers.z.frequencyBinCount;
       const zData = new Float32Array(bufLen);
       const xData = new Float32Array(bufLen);
@@ -419,7 +459,7 @@ async function main() {
     }
   }
 
-  function drawWaveEmpty(yOffset, height, color, label) {
+  function drawWaveEmpty(yOffset: number, height: number, color: string, label: string) {
     const midY = yOffset + height / 2;
 
     // Center line
@@ -441,7 +481,14 @@ async function main() {
     wfCtx.globalAlpha = 1;
   }
 
-  function drawWave(data, bufLen, yOffset, height, color, label) {
+  function drawWave(
+    data: Float32Array,
+    bufLen: number,
+    yOffset: number,
+    height: number,
+    color: string,
+    label: string,
+  ) {
     const midY = yOffset + height / 2;
 
     wfCtx.strokeStyle = "#182035";
@@ -466,7 +513,7 @@ async function main() {
     const step = bufLen / WF_W;
     for (let i = 0; i < WF_W; i++) {
       const idx = Math.floor(i * step);
-      const v = data[idx];
+      const v = data[idx] ?? 0;
       const y = midY - v * (height * 0.45);
       if (i === 0) wfCtx.moveTo(i, y);
       else wfCtx.lineTo(i, y);
@@ -477,25 +524,27 @@ async function main() {
   }
 
   // State vector display
-  function drawStateVector(sv, numQubits) {
+  function drawStateVector(sv: Complex[] | null, numQubits: number) {
     const kets = getKets(numQubits);
     const numStates = 1 << numQubits;
 
     if (!sv) {
-      statevectorEl.innerHTML = `<span class="sv-label">|&psi;&rang; =</span> <span class="sv-ket">${kets[0]}</span>`;
+      statevectorEl.innerHTML = `<span class="sv-label">|&psi;&rang; =</span> <span class="sv-ket">${kets[0] ?? ""}</span>`;
       return;
     }
 
-    const terms = [];
+    const terms: { ampStr: string; ket: string }[] = [];
     for (let i = 0; i < numStates; i++) {
-      const re = sv[i].re;
-      const im = sv[i].im;
+      const amp = sv[i];
+      if (!amp) continue;
+      const re = amp.re;
+      const im = amp.im;
       const mag = Math.sqrt(re * re + im * im);
       if (mag < 1e-6) continue;
 
       const phase = Math.atan2(im, re);
-      let ampStr = formatAmp(mag, phase);
-      terms.push({ ampStr, ket: kets[i] });
+      const ampStr = formatAmp(mag, phase);
+      terms.push({ ampStr, ket: kets[i] ?? "" });
     }
 
     if (terms.length === 0) {
@@ -511,7 +560,7 @@ async function main() {
     statevectorEl.innerHTML = html;
   }
 
-  function drawMixedState(branches, numQubits) {
+  function drawMixedState(branches: MixedBranch[], numQubits: number) {
     const kets = getKets(numQubits);
     const numStates = 1 << numQubits;
 
@@ -528,18 +577,20 @@ async function main() {
       html += `<span class="sv-term"><span class="sv-amp">${pct}%</span> `;
 
       // Show the branch state vector inline
-      const terms = [];
+      const terms: { ampStr: string; ket: string }[] = [];
       for (let i = 0; i < numStates; i++) {
-        const re = branch.sv[i].re;
-        const im = branch.sv[i].im;
+        const amp = branch.sv[i];
+        if (!amp) continue;
+        const re = amp.re;
+        const im = amp.im;
         const mag = Math.sqrt(re * re + im * im);
         if (mag < 1e-6) continue;
         const phase = Math.atan2(im, re);
-        terms.push({ ampStr: formatAmp(mag, phase), ket: kets[i] });
+        terms.push({ ampStr: formatAmp(mag, phase), ket: kets[i] ?? "" });
       }
 
-      if (terms.length === 1 && terms[0].ampStr === "1") {
-        html += `<span class="sv-ket">${terms[0].ket}</span>`;
+      if (terms.length === 1 && terms[0]!.ampStr === "1") {
+        html += `<span class="sv-ket">${terms[0]!.ket}</span>`;
       } else {
         html += "(";
         terms.forEach((t, idx) => {
@@ -553,11 +604,11 @@ async function main() {
     statevectorEl.innerHTML = html;
   }
 
-  function formatAmp(mag, phase) {
+  function formatAmp(mag: number, phase: number): string {
     const phaseDeg = phase * 180 / Math.PI;
     const phaseStr = formatPhase(phaseDeg);
 
-    let magStr;
+    let magStr: string;
     if (Math.abs(mag - 1) < 1e-4) {
       magStr = "";
     } else if (Math.abs(mag - 0.5) < 1e-4) {
@@ -584,14 +635,14 @@ async function main() {
     return `${body}<span class="sv-phase">${phaseStr}</span>`;
   }
 
-  function formatPhase(deg) {
+  function formatPhase(deg: number): string {
     while (deg > 180) deg -= 360;
     while (deg <= -180) deg += 360;
 
     if (Math.abs(deg) < 0.5) return "";
     if (Math.abs(deg - 180) < 0.5 || Math.abs(deg + 180) < 0.5) return "\u2212";
 
-    const known = [
+    const known: [number, string][] = [
       [45,  "e^{i\u03C0/4}"],
       [90,  "i"],
       [135, "e^{i3\u03C0/4}"],
@@ -609,14 +660,14 @@ async function main() {
   }
 
   // Measures display
-  const entBar = document.getElementById("ent-bar");
-  const entVal = document.getElementById("ent-val");
-  const zCorrBar = document.getElementById("z-corr-bar");
-  const zCorrVal = document.getElementById("z-corr-val");
-  const xCorrBar = document.getElementById("x-corr-bar");
-  const xCorrVal = document.getElementById("x-corr-val");
+  const entBar = byId<HTMLElement>("ent-bar");
+  const entVal = byId<HTMLElement>("ent-val");
+  const zCorrBar = byId<HTMLElement>("z-corr-bar");
+  const zCorrVal = byId<HTMLElement>("z-corr-val");
+  const xCorrBar = byId<HTMLElement>("x-corr-bar");
+  const xCorrVal = byId<HTMLElement>("x-corr-val");
 
-  function drawMeasures(measures) {
+  function drawMeasures(measures: Measures | null | undefined) {
     if (!measures) {
       entBar.style.width = "0%";
       entVal.textContent = "0.00";
@@ -649,7 +700,11 @@ async function main() {
   // Initial draws — evaluate the empty circuit at step -1 (just |0...0⟩)
   const initial = engine.evaluate(editor.getCircuit(), -1);
   drawViz(initial.zBasis, initial.xBasis, initial.numQubits);
-  drawStateVector(initial.stateVector, initial.numQubits);
+  if (initial.isMixed) {
+    drawMixedState(initial.branches, initial.numQubits);
+  } else {
+    drawStateVector(initial.stateVector, initial.numQubits);
+  }
   drawMeasures(initial.measures);
   drawWaveforms();
 }
