@@ -47,4 +47,4 @@ npm run dev
 
 ## Contributing
 
-Contributions are welcome via pull request. Please open an issue first for anything substantial so we can discuss the approach. The `main` branch is protected — direct pushes are disabled, and changes land via PR after CI passes.
+Contributions are welcome via pull request. Please open an issue first for anything substantial so we can discuss the approach.
