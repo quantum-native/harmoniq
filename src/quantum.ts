@@ -3,6 +3,7 @@ import {
   ensureLoaded,
   useQuantumForgeBuild,
 } from "quantum-forge/quantum";
+import type { Circuit, Gate } from "./circuit.js";
 
 // `QuantumProperty` is declared inside quantum-forge's .d.ts but not part of
 // the public export list. Recover the type via `acquireProperty`'s return.
@@ -14,20 +15,6 @@ type QuantumProperty = ReturnType<QuantumPropertyManager["acquireProperty"]>;
 export interface Complex {
   re: number;
   im: number;
-}
-
-/** A gate placement on the circuit grid. */
-export interface Gate {
-  type: string;
-  qubit: number;
-  step: number;
-}
-
-/** Circuit shape consumed by `QuantumEngine.evaluate`. */
-export interface Circuit {
-  steps: number;
-  numQubits: number;
-  gates: Gate[];
 }
 
 /** Aggregate measures derived from a single evaluation. */
