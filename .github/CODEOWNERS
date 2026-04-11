@@ -1,0 +1,4 @@
+# Default owners for everything in the repo. Listed owners will be
+# automatically requested for review when someone opens a pull request.
+
+* @cantwellc
