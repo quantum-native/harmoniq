@@ -1,6 +1,89 @@
-import { QuantumPropertyManager, ensureLoaded, useQuantumForgeBuild } from "quantum-forge/quantum";
+import {
+  QuantumPropertyManager,
+  ensureLoaded,
+  useQuantumForgeBuild,
+} from "quantum-forge/quantum";
+import type { Circuit, Gate } from "./circuit.js";
 
-export async function initQuantum() {
+// `QuantumProperty` is declared inside quantum-forge's .d.ts but not part of
+// the public export list. Recover the type via `acquireProperty`'s return.
+type QuantumProperty = ReturnType<QuantumPropertyManager["acquireProperty"]>;
+
+// --- Domain types ---
+
+/** A single complex amplitude in the reconstructed state vector. */
+export interface Complex {
+  re: number;
+  im: number;
+}
+
+/** Aggregate measures derived from a single evaluation. */
+export interface Measures {
+  entanglement: number;
+  zCorrelation: number;
+  xCorrelation: number;
+}
+
+/** A single mixed-state branch produced by measurement gates. */
+export interface MixedBranch {
+  weight: number;
+  zBasis: number[];
+  xBasis: number[];
+  sv: Complex[];
+}
+
+/**
+ * Result of evaluating the circuit at a particular step. The shape is a
+ * discriminated union on `isMixed`: pure states have a `stateVector`, mixed
+ * states have a `branches` array and a `null` state vector.
+ */
+export type EvaluationResult =
+  | {
+      zBasis: number[];
+      xBasis: number[];
+      stateVector: Complex[];
+      numQubits: number;
+      measures: Measures;
+      isMixed: false;
+    }
+  | {
+      zBasis: number[];
+      xBasis: number[];
+      stateVector: null;
+      numQubits: number;
+      measures: Measures;
+      isMixed: true;
+      branches: MixedBranch[];
+    };
+
+/** Public surface of the stateful quantum engine. */
+export interface QuantumEngine {
+  /** Evaluate the circuit up to (and including) `upToStep`. */
+  evaluate(circuit: Circuit, upToStep: number): EvaluationResult;
+  /** Mark the cached state stale (call when the circuit is edited). */
+  invalidate(): void;
+}
+
+// Module type returned by manager.getModule(). We pin it here so the
+// inner helpers can be typed without re-deriving the namespace.
+type QFModule = ReturnType<QuantumPropertyManager["getModule"]>;
+
+// Forced-outcome record used during mixed-state branch evaluation.
+interface ForcedOutcome {
+  step: number;
+  qubit: number;
+  value: number;
+}
+
+// Internal per-branch result before mixing.
+interface BranchResult {
+  weight: number;
+  zBasis: number[];
+  xBasis: number[];
+  sv: Complex[];
+}
+
+export async function initQuantum(): Promise<void> {
   useQuantumForgeBuild("qubit");
   await ensureLoaded();
 }
@@ -10,22 +93,25 @@ export async function initQuantum() {
  * alive. Properties are reused via the pool (measure → release → re-acquire)
  * rather than recreating the manager on each reset.
  */
-export function createQuantumEngine() {
+export function createQuantumEngine(): QuantumEngine {
   const manager = new QuantumPropertyManager({ dimension: 2 });
   const m = manager.getModule();
 
-  let qubits = [];
+  let qubits: QuantumProperty[] = [];
   let numQubits = 0;
   let cachedStep = -1;
   let circuitVersion = 0;
 
   /** Reset all properties to |0⟩ via measure + release + re-acquire. */
-  function resetProperties(n) {
+  function resetProperties(n: number): void {
     // Release existing properties back to pool
     if (qubits.length > 0) {
       const values = m.measure_properties(qubits);
       for (let i = 0; i < qubits.length; i++) {
-        manager.releaseProperty(qubits[i], values[i]);
+        const q = qubits[i];
+        const v = values[i];
+        if (q === undefined || v === undefined) continue;
+        manager.releaseProperty(q, v);
       }
     }
 
@@ -39,7 +125,7 @@ export function createQuantumEngine() {
   }
 
   /** Call when the circuit is edited (gates/qubits changed). */
-  function invalidate() {
+  function invalidate(): void {
     circuitVersion++;
   }
 
@@ -47,7 +133,7 @@ export function createQuantumEngine() {
    * Evaluate the circuit up to the given step.
    * Advances incrementally on forward steps; resets on backward/loop/edit.
    */
-  function evaluate(circuit, upToStep) {
+  function evaluate(circuit: Circuit, upToStep: number): EvaluationResult {
     const n = circuit.numQubits || 3;
 
     // Mixed-state path: measurement gates require branching
@@ -64,7 +150,11 @@ export function createQuantumEngine() {
 
   let lastCircuitVersion = -1;
 
-  function evaluatePureCached(circuit, upToStep, n) {
+  function evaluatePureCached(
+    circuit: Circuit,
+    upToStep: number,
+    n: number,
+  ): EvaluationResult {
     // Check if we can advance incrementally
     const needsReset =
       n !== numQubits ||
@@ -86,7 +176,11 @@ export function createQuantumEngine() {
     return readState(m, qubits, n);
   }
 
-  function readState(mod, props, n) {
+  function readState(
+    mod: QFModule,
+    props: QuantumProperty[],
+    n: number,
+  ): EvaluationResult {
     const zRaw = mod.probabilities(props);
     const zBasis = parseProbabilities(zRaw, n);
     const stateVector = extractStateVector(mod, props, n);
@@ -103,16 +197,21 @@ export function createQuantumEngine() {
   // --- Mixed-state evaluation (measurement gates) ---
   // Branches use the same manager: reset → replay → read → reset for next branch.
 
-  function evaluateMixed(circuit, upToStep, n, measGates) {
+  function evaluateMixed(
+    circuit: Circuit,
+    upToStep: number,
+    n: number,
+    measGates: Gate[],
+  ): EvaluationResult {
     const numStates = 1 << n;
     const numBranches = 1 << measGates.length;
-    let zBasis = new Array(numStates).fill(0);
-    let xBasis = new Array(numStates).fill(0);
+    const zBasis: number[] = new Array(numStates).fill(0);
+    const xBasis: number[] = new Array(numStates).fill(0);
     let totalEntanglement = 0;
-    const branches = [];
+    const branches: MixedBranch[] = [];
 
     for (let combo = 0; combo < numBranches; combo++) {
-      const forced = measGates.map((mg, idx) => ({
+      const forced: ForcedOutcome[] = measGates.map((mg, idx) => ({
         step: mg.step,
         qubit: mg.qubit,
         value: (combo >> (measGates.length - 1 - idx)) & 1,
@@ -122,8 +221,10 @@ export function createQuantumEngine() {
       if (!result) continue;
 
       for (let i = 0; i < numStates; i++) {
-        zBasis[i] += result.weight * result.zBasis[i];
-        xBasis[i] += result.weight * result.xBasis[i];
+        const zi = result.zBasis[i] ?? 0;
+        const xi = result.xBasis[i] ?? 0;
+        zBasis[i] = (zBasis[i] ?? 0) + result.weight * zi;
+        xBasis[i] = (xBasis[i] ?? 0) + result.weight * xi;
       }
 
       totalEntanglement += result.weight * branchEntanglement(result.sv, n);
@@ -134,16 +235,29 @@ export function createQuantumEngine() {
     cachedStep = -1;
     lastCircuitVersion = -1;
 
-    const measures = {
+    const measures: Measures = {
       entanglement: totalEntanglement,
       zCorrelation: basisCorrelation(zBasis, n),
       xCorrelation: basisCorrelation(xBasis, n),
     };
 
-    return { zBasis, xBasis, stateVector: null, numQubits: n, measures, isMixed: true, branches };
+    return {
+      zBasis,
+      xBasis,
+      stateVector: null,
+      numQubits: n,
+      measures,
+      isMixed: true,
+      branches,
+    };
   }
 
-  function evaluateBranch(circuit, upToStep, n, forcedOutcomes) {
+  function evaluateBranch(
+    circuit: Circuit,
+    upToStep: number,
+    n: number,
+    forcedOutcomes: ForcedOutcome[],
+  ): BranchResult | null {
     const numStates = 1 << n;
 
     // Reset properties for this branch
@@ -156,20 +270,25 @@ export function createQuantumEngine() {
       const stepGates = circuit.gates.filter((g) => g.step === step && g.type !== "M");
       applyStep(m, qubits, stepGates);
 
-      while (foIdx < forcedOutcomes.length && forcedOutcomes[foIdx].step === step) {
+      while (foIdx < forcedOutcomes.length && forcedOutcomes[foIdx]?.step === step) {
         const fo = forcedOutcomes[foIdx];
+        if (fo === undefined) break;
 
         const probs = m.probabilities(qubits);
         const parsed = parseProbabilities(probs, n);
         const bit = 1 << (n - 1 - fo.qubit);
         let pVal = 0;
         for (let k = 0; k < numStates; k++) {
-          if (fo.value === 1 ? (k & bit) : !(k & bit)) pVal += parsed[k];
+          if (fo.value === 1 ? (k & bit) : !(k & bit)) pVal += parsed[k] ?? 0;
         }
         weight *= pVal;
         if (weight < 1e-15) return null;
 
-        m.forced_measure_properties([qubits[fo.qubit]], [fo.value]);
+        const target = qubits[fo.qubit];
+        if (target === undefined) {
+          throw new Error(`Forced measurement targets missing qubit ${fo.qubit}`);
+        }
+        m.forced_measure_properties([target], [fo.value]);
         foIdx++;
       }
     }
@@ -198,14 +317,21 @@ export function createQuantumEngine() {
  *   CTRL(q0) + Z(q1)            → CZ
  *   CTRL(q0) + CTRL(q1) + X(q2) → Toffoli
  */
-function applyStep(m, qubits, gates) {
+function applyStep(m: QFModule, qubits: QuantumProperty[], gates: Gate[]): void {
   const controls = gates.filter((g) => g.type === "CTRL");
-  const predicates = controls.map((c) => qubits[c.qubit].is(1));
+  const predicates = controls.map((c) => {
+    const q = qubits[c.qubit];
+    if (q === undefined) {
+      throw new Error(`Control references missing qubit ${c.qubit}`);
+    }
+    return q.is(1);
+  });
   const useArg = predicates.length > 0 ? predicates : undefined;
 
   for (const gate of gates) {
     if (gate.type === "CTRL") continue;
     const q = qubits[gate.qubit];
+    if (q === undefined) continue;
     switch (gate.type) {
       case "H":
         m.hadamard(q, 1, useArg);
@@ -225,9 +351,12 @@ function applyStep(m, qubits, gates) {
 
 // --- Probability / state vector helpers ---
 
-function parseProbabilities(raw, n) {
+function parseProbabilities(
+  raw: Array<{ probability: number; qudit_values: number[] }>,
+  n: number,
+): number[] {
   const numStates = 1 << n;
-  const probs = new Array(numStates).fill(0);
+  const probs: number[] = new Array(numStates).fill(0);
   for (const entry of raw) {
     const index = valsToIndex(entry.qudit_values, n);
     probs[index] = entry.probability;
@@ -235,32 +364,39 @@ function parseProbabilities(raw, n) {
   return probs;
 }
 
-function valsToIndex(vals, n) {
+function valsToIndex(vals: number[], n: number): number {
   let idx = 0;
   for (let i = 0; i < n; i++) {
-    idx = (idx << 1) | vals[i];
+    idx = (idx << 1) | (vals[i] ?? 0);
   }
   return idx;
 }
 
-function extractStateVector(m, qubits, n) {
+function extractStateVector(
+  m: QFModule,
+  qubits: QuantumProperty[],
+  n: number,
+): Complex[] {
   const numStates = 1 << n;
   const dm = m.reduced_density_matrix(qubits);
 
-  const rho = Array.from({ length: numStates }, () =>
-    Array.from({ length: numStates }, () => ({ re: 0, im: 0 }))
+  const rho: Complex[][] = Array.from({ length: numStates }, () =>
+    Array.from({ length: numStates }, () => ({ re: 0, im: 0 })),
   );
   for (const entry of dm) {
     const r = valsToIndex(entry.row_values, n);
     const c = valsToIndex(entry.col_values, n);
-    rho[r][c] = { re: entry.value.real, im: entry.value.imag };
+    const row = rho[r];
+    if (row === undefined) continue;
+    row[c] = { re: entry.value.real, im: entry.value.imag };
   }
 
   let refIdx = 0;
   let maxProb = 0;
   for (let i = 0; i < numStates; i++) {
-    if (rho[i][i].re > maxProb) {
-      maxProb = rho[i][i].re;
+    const diag = rho[i]?.[i];
+    if (diag !== undefined && diag.re > maxProb) {
+      maxProb = diag.re;
       refIdx = i;
     }
   }
@@ -270,11 +406,12 @@ function extractStateVector(m, qubits, n) {
   }
 
   const alphaRef = Math.sqrt(maxProb);
-  const sv = [];
+  const sv: Complex[] = [];
   for (let i = 0; i < numStates; i++) {
+    const cell = rho[i]?.[refIdx] ?? { re: 0, im: 0 };
     sv.push({
-      re: rho[i][refIdx].re / alphaRef,
-      im: rho[i][refIdx].im / alphaRef,
+      re: cell.re / alphaRef,
+      im: cell.im / alphaRef,
     });
   }
   return sv;
@@ -282,7 +419,7 @@ function extractStateVector(m, qubits, n) {
 
 // --- Measures ---
 
-function branchEntanglement(sv, n) {
+function branchEntanglement(sv: Complex[], n: number): number {
   if (n < 2) return 0;
   const numStates = 1 << n;
   let totalEntropy = 0;
@@ -293,9 +430,11 @@ function branchEntanglement(sv, n) {
 
     for (let k = 0; k < numStates; k++) {
       const ak = sv[k];
+      if (ak === undefined) continue;
       if ((k & bit) === 0) {
         const l = k | bit;
         const al = sv[l];
+        if (al === undefined) continue;
         r00re += ak.re * ak.re + ak.im * ak.im;
         r11re += al.re * al.re + al.im * al.im;
         r01re += ak.re * al.re + ak.im * al.im;
@@ -318,7 +457,12 @@ function branchEntanglement(sv, n) {
   return totalEntropy / n;
 }
 
-function computeMeasures(sv, zBasis, xBasis, n) {
+function computeMeasures(
+  sv: Complex[],
+  zBasis: number[],
+  xBasis: number[],
+  n: number,
+): Measures {
   if (n < 2) return { entanglement: 0, zCorrelation: 0, xCorrelation: 0 };
   return {
     entanglement: branchEntanglement(sv, n),
@@ -327,7 +471,7 @@ function computeMeasures(sv, zBasis, xBasis, n) {
   };
 }
 
-function basisCorrelation(probs, n) {
+function basisCorrelation(probs: number[], n: number): number {
   const numStates = 1 << n;
   let totalNMI = 0;
   let numPairs = 0;
@@ -341,7 +485,7 @@ function basisCorrelation(probs, n) {
       let p00 = 0, p01 = 0, p10 = 0, p11 = 0;
 
       for (let k = 0; k < numStates; k++) {
-        const p = probs[k];
+        const p = probs[k] ?? 0;
         const vi = (k & bitI) ? 1 : 0;
         const vj = (k & bitJ) ? 1 : 0;
         if (vi === 0) pI0 += p; else pI1 += p;
@@ -370,7 +514,7 @@ function basisCorrelation(probs, n) {
   return numPairs > 0 ? totalNMI / numPairs : 0;
 }
 
-function shannonH(probs) {
+function shannonH(probs: number[]): number {
   let h = 0;
   for (const p of probs) {
     if (p > 1e-15) h -= p * Math.log2(p);
