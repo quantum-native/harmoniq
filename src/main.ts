@@ -21,6 +21,41 @@ function isGateKind(v: string | undefined): v is GateKind {
   );
 }
 
+function addRangeSteppers(root: ParentNode = document): void {
+  const ranges = root.querySelectorAll<HTMLInputElement>('input[type="range"]');
+  ranges.forEach((range) => {
+    if (range.parentElement?.classList.contains("range-stepper")) return;
+
+    const stepper = document.createElement("span");
+    stepper.className = "range-stepper";
+
+    const decrement = document.createElement("button");
+    decrement.type = "button";
+    decrement.className = "range-step";
+    decrement.textContent = "‹";
+    decrement.setAttribute("aria-label", `Decrease ${range.id}`);
+
+    const increment = document.createElement("button");
+    increment.type = "button";
+    increment.className = "range-step";
+    increment.textContent = "›";
+    increment.setAttribute("aria-label", `Increase ${range.id}`);
+
+    range.before(stepper);
+    stepper.append(decrement, range, increment);
+
+    const stepBy = (direction: -1 | 1) => {
+      if (direction < 0) range.stepDown();
+      else range.stepUp();
+      range.dispatchEvent(new Event("input", { bubbles: true }));
+      range.dispatchEvent(new Event("change", { bubbles: true }));
+    };
+
+    decrement.addEventListener("click", () => stepBy(-1));
+    increment.addEventListener("click", () => stepBy(1));
+  });
+}
+
 const status = byId<HTMLElement>("status");
 const circuitCanvas = byId<HTMLCanvasElement>("circuit-canvas");
 const vizCanvas = byId<HTMLCanvasElement>("viz-canvas");
@@ -127,6 +162,8 @@ async function main(): Promise<void> {
 
   status.textContent = "Ready";
 
+  addRangeSteppers();
+
   const audio = createAudioEngine();
   const engine = createQuantumEngine();
   const editor = createCircuitEditor(circuitCanvas, onCircuitChange);
@@ -193,6 +230,19 @@ async function main(): Promise<void> {
   });
 
   // Sound controls
+  function readEnvelope(prefix: "z" | "x") {
+    return {
+      attack: parseFloat(byId<HTMLInputElement>(`ctrl-${prefix}-attack`).value),
+      decay: parseFloat(byId<HTMLInputElement>(`ctrl-${prefix}-decay`).value),
+      sustain: parseFloat(byId<HTMLInputElement>(`ctrl-${prefix}-sustain`).value),
+      release: parseFloat(byId<HTMLInputElement>(`ctrl-${prefix}-release`).value),
+    };
+  }
+
+  function formatTime(seconds: number): string {
+    return seconds < 1 ? `${Math.round(seconds * 1000)}ms` : `${seconds.toFixed(1)}s`;
+  }
+
   function syncAudioParams() {
     const zWave = byId<HTMLSelectElement>("ctrl-z-wave").value as OscillatorType;
     const xWave = byId<HTMLSelectElement>("ctrl-x-wave").value as OscillatorType;
@@ -202,14 +252,21 @@ async function main(): Promise<void> {
       scale: byId<HTMLSelectElement>("ctrl-scale").value,
       rootOctave: parseInt(byId<HTMLSelectElement>("ctrl-octave").value),
       xOctaveOffset: parseInt(byId<HTMLSelectElement>("ctrl-x-oct-offset").value),
-      decay: parseFloat(byId<HTMLInputElement>("ctrl-decay").value),
+      zEnvelope: readEnvelope("z"),
+      xEnvelope: readEnvelope("x"),
       reverb: parseFloat(byId<HTMLInputElement>("ctrl-reverb").value),
       zVolume: parseFloat(byId<HTMLInputElement>("ctrl-z-vol").value),
       xVolume: parseFloat(byId<HTMLInputElement>("ctrl-x-vol").value),
       masterVolume: parseFloat(byId<HTMLInputElement>("ctrl-master").value),
     });
-    const d = parseFloat(byId<HTMLInputElement>("ctrl-decay").value);
-    byId<HTMLElement>("ctrl-decay-val").textContent = d === 0 ? "off" : Math.round(d * 100) + "%";
+    for (const basis of ["z", "x"] as const) {
+      const envelope = readEnvelope(basis);
+      byId<HTMLElement>(`ctrl-${basis}-attack-val`).textContent = formatTime(envelope.attack);
+      byId<HTMLElement>(`ctrl-${basis}-decay-val`).textContent = formatTime(envelope.decay);
+      byId<HTMLElement>(`ctrl-${basis}-sustain-val`).textContent = Math.round(envelope.sustain * 100) + "%";
+      byId<HTMLElement>(`ctrl-${basis}-release-val`).textContent =
+        envelope.release === 0 ? "hold" : formatTime(envelope.release);
+    }
     byId<HTMLElement>("ctrl-reverb-val").textContent = Math.round(parseFloat(byId<HTMLInputElement>("ctrl-reverb").value) * 100) + "%";
     byId<HTMLElement>("ctrl-z-vol-val").textContent = Math.round(parseFloat(byId<HTMLInputElement>("ctrl-z-vol").value) * 100) + "%";
     byId<HTMLElement>("ctrl-x-vol-val").textContent = Math.round(parseFloat(byId<HTMLInputElement>("ctrl-x-vol").value) * 100) + "%";

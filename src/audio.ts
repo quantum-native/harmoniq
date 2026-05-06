@@ -70,13 +70,21 @@ export function getKets(n: number): string[] {
   return kets;
 }
 
+export interface EnvelopeParams {
+  attack: number;
+  decay: number;
+  sustain: number;
+  release: number;
+}
+
 export interface AudioParams {
   zWaveform: OscillatorType;
   xWaveform: OscillatorType;
   zVolume: number;
   xVolume: number;
   masterVolume: number;
-  decay: number;
+  zEnvelope: EnvelopeParams;
+  xEnvelope: EnvelopeParams;
   reverb: number;
   scale: string;
   rootOctave: number;
@@ -126,7 +134,8 @@ export function createAudioEngine(): AudioEngine {
     zVolume: 0.8,
     xVolume: 0.5,
     masterVolume: 0.5,
-    decay: 0.1,
+    zEnvelope: { attack: 0.015, decay: 0.25, sustain: 0.65, release: 0.4 },
+    xEnvelope: { attack: 0.015, decay: 0.25, sustain: 0.65, release: 0.4 },
     reverb: 0.2,
     scale: "C major",
     rootOctave: 4,
@@ -270,12 +279,39 @@ export function createAudioEngine(): AudioEngine {
     if (!zGains) return;
     const t = ctx!.currentTime;
     for (let i = 0; i < zGains.length; i++) {
-      zGains[i]!.gain.cancelScheduledValues(t);
-      zGains[i]!.gain.setValueAtTime(zGains[i]!.gain.value, t);
-      zGains[i]!.gain.linearRampToValueAtTime(0, t + 0.05);
-      xGains![i]!.gain.cancelScheduledValues(t);
-      xGains![i]!.gain.setValueAtTime(xGains![i]!.gain.value, t);
-      xGains![i]!.gain.linearRampToValueAtTime(0, t + 0.05);
+      releaseGain(zGains[i]!.gain, params.zEnvelope.release, t);
+      releaseGain(xGains![i]!.gain, params.xEnvelope.release, t);
+    }
+  }
+
+  function releaseGain(gain: AudioParam, releaseTime: number, startTime: number): void {
+    const fadeTime = Math.max(0.01, releaseTime);
+    gain.cancelScheduledValues(startTime);
+    gain.setValueAtTime(gain.value, startTime);
+    gain.linearRampToValueAtTime(0, startTime + fadeTime);
+  }
+
+  function applyEnvelope(gain: AudioParam, target: number, envelope: EnvelopeParams, startTime: number): void {
+    gain.cancelScheduledValues(startTime);
+    gain.setValueAtTime(gain.value, startTime);
+
+    if (target <= 0.0001) {
+      releaseGain(gain, envelope.release, startTime);
+      return;
+    }
+
+    const attackTime = Math.max(0.001, envelope.attack);
+    const decayTime = Math.max(0, envelope.decay);
+    const releaseTime = Math.max(0, envelope.release);
+    const sustainTarget = Math.max(target * envelope.sustain, 0.0001);
+    const peakTime = startTime + attackTime;
+    const sustainTime = peakTime + decayTime;
+
+    gain.linearRampToValueAtTime(target, peakTime);
+    gain.linearRampToValueAtTime(sustainTarget, sustainTime);
+
+    if (releaseTime > 0) {
+      gain.linearRampToValueAtTime(0, sustainTime + releaseTime);
     }
   }
 
@@ -284,27 +320,12 @@ export function createAudioEngine(): AudioEngine {
     const t = ctx!.currentTime;
     const count = Math.min(zBasis.length, zGains.length);
 
-    const attack = 0.015; // 15ms ramp to avoid clicks
-
     for (let i = 0; i < count; i++) {
       const zTarget = Math.sqrt(zBasis[i]!) * 0.4;
       const xTarget = Math.sqrt(xBasis[i]!) * 0.4;
 
-      // Cancel pending automation and anchor current value
-      zGains[i]!.gain.cancelScheduledValues(t);
-      zGains[i]!.gain.setValueAtTime(zGains[i]!.gain.value, t);
-      xGains![i]!.gain.cancelScheduledValues(t);
-      xGains![i]!.gain.setValueAtTime(xGains![i]!.gain.value, t);
-
-      // Ramp to target (never jump)
-      zGains[i]!.gain.linearRampToValueAtTime(zTarget, t + attack);
-      xGains![i]!.gain.linearRampToValueAtTime(xTarget, t + attack);
-
-      if (params.decay > 0) {
-        const decayTime = 0.05 + (1 - params.decay) * 2.0;
-        zGains[i]!.gain.exponentialRampToValueAtTime(Math.max(zTarget * 0.001, 0.0001), t + attack + decayTime);
-        xGains![i]!.gain.exponentialRampToValueAtTime(Math.max(xTarget * 0.001, 0.0001), t + attack + decayTime);
-      }
+      applyEnvelope(zGains[i]!.gain, zTarget, params.zEnvelope, t);
+      applyEnvelope(xGains![i]!.gain, xTarget, params.xEnvelope, t);
     }
   }
 

@@ -433,6 +433,22 @@
     align-items: center;
     gap: 8px;
   }
+  .ctrl-subhead {
+    grid-column: 1 / -1;
+    font-family: var(--font-display);
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    border-top: 1px solid var(--surface-3);
+    padding-top: 10px;
+    margin-top: 2px;
+  }
+  .ctrl-subhead.z { color: var(--violet-bright); }
+  .ctrl-subhead.x { color: var(--coral); }
+  .ctrl-subhead.fx { color: var(--gold); }
+  .ctrl-subhead.master { color: var(--cyan-bright); }
   .ctrl-group label {
     font-family: var(--font-display);
     font-size: 9px;
@@ -449,6 +465,44 @@
     height: 3px;
     accent-color: var(--cyan-bright);
     min-width: 50px;
+  }
+  .range-stepper {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    flex: 1;
+    min-width: 92px;
+  }
+  .range-stepper input[type="range"] {
+    flex: 1;
+    min-width: 38px;
+  }
+  .range-step {
+    width: 20px;
+    height: 20px;
+    display: inline-grid;
+    place-items: center;
+    background: var(--void);
+    border: 1px solid var(--surface-3);
+    color: var(--text-muted);
+    font-family: var(--font-display);
+    font-size: 10px;
+    line-height: 1;
+    padding: 0;
+    cursor: pointer;
+    transition: all 0.18s var(--ease);
+  }
+  .range-step:hover {
+    color: var(--cyan-bright);
+    border-color: var(--border-bright);
+    background: var(--surface-2);
+  }
+  .range-step:focus-visible {
+    outline: 1px solid var(--cyan-bright);
+    outline-offset: 2px;
+  }
+  .transport .range-stepper {
+    flex: 0 1 170px;
   }
   .ctrl-group select {
     background: var(--void);
@@ -787,7 +841,7 @@
     </div>
     <div class="header-meta">
       <span class="live-dot"><span id="status">Initializing</span></span>
-      <span id="version">v0.3.2</span>
+      <span id="version">v0.3.3</span>
     </div>
   </header>
 
@@ -888,28 +942,67 @@
               <option value="-1">-1</option>
             </select>
           </div>
-          <div class="ctrl-group">
-            <label>Decay</label>
-            <input type="range" id="ctrl-decay" min="0" max="1" step="0.01" value="0.1">
-            <span class="ctrl-value" id="ctrl-decay-val">10%</span>
-          </div>
-          <div class="ctrl-group">
-            <label>Reverb</label>
-            <input type="range" id="ctrl-reverb" min="0" max="1" step="0.01" value="0.2">
-            <span class="ctrl-value" id="ctrl-reverb-val">20%</span>
-          </div>
+          <div class="ctrl-subhead z">Z Envelope</div>
           <div class="ctrl-group">
             <label>Z Vol</label>
             <input type="range" id="ctrl-z-vol" min="0" max="1" step="0.01" value="0.8">
             <span class="ctrl-value" id="ctrl-z-vol-val">80%</span>
           </div>
           <div class="ctrl-group">
+            <label>Z A</label>
+            <input type="range" id="ctrl-z-attack" min="0" max="1" step="0.001" value="0.015">
+            <span class="ctrl-value" id="ctrl-z-attack-val">15ms</span>
+          </div>
+          <div class="ctrl-group">
+            <label>Z D</label>
+            <input type="range" id="ctrl-z-decay" min="0" max="2" step="0.001" value="0.25">
+            <span class="ctrl-value" id="ctrl-z-decay-val">250ms</span>
+          </div>
+          <div class="ctrl-group">
+            <label>Z S</label>
+            <input type="range" id="ctrl-z-sustain" min="0" max="1" step="0.01" value="0.65">
+            <span class="ctrl-value" id="ctrl-z-sustain-val">65%</span>
+          </div>
+          <div class="ctrl-group">
+            <label>Z R</label>
+            <input type="range" id="ctrl-z-release" min="0" max="3" step="0.001" value="0.4">
+            <span class="ctrl-value" id="ctrl-z-release-val">400ms</span>
+          </div>
+          <div class="ctrl-subhead x">X Envelope</div>
+          <div class="ctrl-group">
             <label>X Vol</label>
             <input type="range" id="ctrl-x-vol" min="0" max="1" step="0.01" value="0.5">
             <span class="ctrl-value" id="ctrl-x-vol-val">50%</span>
           </div>
           <div class="ctrl-group">
-            <label>Master</label>
+            <label>X A</label>
+            <input type="range" id="ctrl-x-attack" min="0" max="1" step="0.001" value="0.015">
+            <span class="ctrl-value" id="ctrl-x-attack-val">15ms</span>
+          </div>
+          <div class="ctrl-group">
+            <label>X D</label>
+            <input type="range" id="ctrl-x-decay" min="0" max="2" step="0.001" value="0.25">
+            <span class="ctrl-value" id="ctrl-x-decay-val">250ms</span>
+          </div>
+          <div class="ctrl-group">
+            <label>X S</label>
+            <input type="range" id="ctrl-x-sustain" min="0" max="1" step="0.01" value="0.65">
+            <span class="ctrl-value" id="ctrl-x-sustain-val">65%</span>
+          </div>
+          <div class="ctrl-group">
+            <label>X R</label>
+            <input type="range" id="ctrl-x-release" min="0" max="3" step="0.001" value="0.4">
+            <span class="ctrl-value" id="ctrl-x-release-val">400ms</span>
+          </div>
+          <div class="ctrl-subhead fx">Reverb</div>
+          <div class="ctrl-group">
+            <label>Amount</label>
+            <input type="range" id="ctrl-reverb" min="0" max="1" step="0.01" value="0.2">
+            <span class="ctrl-value" id="ctrl-reverb-val">20%</span>
+          </div>
+          <div class="ctrl-subhead master">Master</div>
+          <div class="ctrl-group">
+            <label>Volume</label>
             <input type="range" id="ctrl-master" min="0" max="1" step="0.01" value="0.5">
             <span class="ctrl-value" id="ctrl-master-val">50%</span>
           </div>
@@ -1050,8 +1143,9 @@
               layer relative to the root. Default +1 separates the two layers.
             </li>
             <li>
-              <strong>Decay</strong> — note attenuation. At 0, notes sustain
-              as a drone. Higher values give pad-like tails or short plucks.
+              <strong>Z / X envelope</strong> — independent attack, decay,
+              sustain, and release for each basis layer. Set release to hold
+              for drones, or shorten sustain and release for plucks.
             </li>
             <li>
               <strong>Reverb</strong> — delay-feedback reverb with a
@@ -1080,7 +1174,7 @@
           <ul>
             <li>
               <strong>Scale</strong> — walks through all basis states
-              sequentially using X gates. Try this with decay turned up for an arpeggio.
+              sequentially using X gates. Try this with short envelopes for an arpeggio.
             </li>
             <li>
               <strong>Full Superposition</strong> — H on all qubits.
@@ -1121,9 +1215,9 @@
               immediately. Something invisible in one basis is loud in the other.
             </li>
             <li>
-              <strong>Scale + decay:</strong> Try blues with moderate
-              decay for a jazzy plucked feel. Whole tone with no decay for
-              an eerie drone. Pentatonic always sounds consonant.
+              <strong>Scale + envelope:</strong> Try blues with a short
+              release for a jazzy plucked feel. Whole tone with release on
+              hold for an eerie drone. Pentatonic always sounds consonant.
             </li>
             <li>
               <strong>Toffoli:</strong> Two controls plus an X (● + ● + X)
