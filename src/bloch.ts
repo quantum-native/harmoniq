@@ -1,7 +1,6 @@
 /**
- * A small interactive Bloch sphere HUD. Renders into a caller-owned canvas
- * and reports back rotations via `onChange`. Built for the channel cards
- * but has no dependency on the channels store.
+ * A small Bloch sphere HUD. Display-only: callers drive `setVector`
+ * (typically wired to rotation controls). Renders into a caller-owned canvas.
  */
 
 export interface BlochHUDOptions {
@@ -11,16 +10,12 @@ export interface BlochHUDOptions {
   initialTheta: number;
   /** Initial azimuth from +x toward +y, in radians. */
   initialPhi: number;
-  /** Dynamic predicate: when true, drag/click updates snap to multiples of π/8. */
-  isSnapping: () => boolean;
-  /** Called after every change. Callers persist this back to wherever owns the truth. */
-  onChange: (theta: number, phi: number) => void;
 }
 
 export interface BlochHUD {
-  /** Programmatically set the vector. Doesn't fire onChange. */
+  /** Update the displayed Bloch vector. */
   setVector(theta: number, phi: number): void;
-  /** Recolor the vector arrow (channel color may change). */
+  /** Recolor the vector arrow. */
   setColor(color: string): void;
   /** Force a redraw (call after the canvas is resized externally). */
   redraw(): void;
@@ -46,20 +41,17 @@ function project(v: Vec3): Vec2 {
   return { x: xc, y: -(yc * sEL + zc * cEL) };
 }
 
-const SNAP_STEP = Math.PI / 8;
-
 // Hardcoded screen-relative offsets (in units of sphere radius) for the
-// six axis-pole labels. Projecting the unit axes through `project` puts a
-// few of them inside the silhouette of the sphere, so we lay them out by
-// hand around the projected sphere instead.
-interface PoleSpec { text: string; dx: number; dy: number; theta: number; phi: number; }
+// six axis pole labels. Projecting unit axes through `project` puts some
+// inside the silhouette of the sphere, so we lay them out by hand.
+interface PoleSpec { text: string; dx: number; dy: number; }
 const POLES: PoleSpec[] = [
-  { text: "+X", dx:  1.25, dy:  0.25, theta: Math.PI / 2, phi: 0 },
-  { text: "−X", dx: -1.25, dy: -0.25, theta: Math.PI / 2, phi: Math.PI },
-  { text: "+Y", dx:  0.75, dy: -0.55, theta: Math.PI / 2, phi: Math.PI / 2 },
-  { text: "−Y", dx: -0.75, dy:  0.55, theta: Math.PI / 2, phi: (3 * Math.PI) / 2 },
-  { text: "+Z", dx:  0.0,  dy: -1.20, theta: 0,            phi: 0 },
-  { text: "−Z", dx:  0.0,  dy:  1.20, theta: Math.PI,      phi: 0 },
+  { text: "+X", dx:  1.25, dy:  0.25 },
+  { text: "−X", dx: -1.25, dy: -0.25 },
+  { text: "+Y", dx:  0.75, dy: -0.55 },
+  { text: "−Y", dx: -0.75, dy:  0.55 },
+  { text: "+Z", dx:  0.0,  dy: -1.20 },
+  { text: "−Z", dx:  0.0,  dy:  1.20 },
 ];
 
 export function createBlochHUD(
@@ -72,26 +64,9 @@ export function createBlochHUD(
     return c;
   })();
 
-  let theta = clampTheta(opts.initialTheta);
-  let phi = wrapPhi(opts.initialPhi);
+  let theta = opts.initialTheta;
+  let phi = opts.initialPhi;
   let color = opts.color;
-  let dragging = false;
-  let dragMovedDistance = 0; // suppress label-click after a real drag
-  let lastX = 0;
-  let lastY = 0;
-
-  function clampTheta(t: number): number {
-    return Math.max(0, Math.min(Math.PI, t));
-  }
-  function wrapPhi(p: number): number {
-    let v = p % (2 * Math.PI);
-    if (v < 0) v += 2 * Math.PI;
-    return v;
-  }
-  function maybeSnap(t: number, p: number): [number, number] {
-    if (!opts.isSnapping()) return [t, p];
-    return [Math.round(t / SNAP_STEP) * SNAP_STEP, Math.round(p / SNAP_STEP) * SNAP_STEP];
-  }
 
   function blochVec(t: number, p: number): Vec3 {
     const s = Math.sin(t);
@@ -104,10 +79,6 @@ export function createBlochHUD(
     const h = rect.height || 160;
     const r = Math.min(w, h) * 0.36;
     return { w, h, r, cx: w / 2, cy: h / 2 };
-  }
-
-  function poleScreenPos(p: PoleSpec, cx: number, cy: number, r: number): Vec2 {
-    return { x: cx + p.dx * r, y: cy + p.dy * r };
   }
 
   function setSize() {
@@ -144,14 +115,13 @@ export function createBlochHUD(
     drawAxis(cx, cy, r, { x: 0, y: 1, z: 0 });
     drawAxis(cx, cy, r, { x: 0, y: 0, z: 1 });
 
-    // Axis labels (clickable pole shortcuts)
+    // Axis pole labels
     ctx.font = "10px 'Chakra Petch', monospace";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillStyle = "#64748b";
     for (const pole of POLES) {
-      const pos = poleScreenPos(pole, cx, cy, r);
-      ctx.fillText(pole.text, pos.x, pos.y);
+      ctx.fillText(pole.text, cx + pole.dx * r, cy + pole.dy * r);
     }
 
     // Bloch vector
@@ -209,91 +179,12 @@ export function createBlochHUD(
     ctx.stroke();
   }
 
-  // ── Interaction ──────────────────────────────────────────────────────
-
-  function canvasPos(e: MouseEvent): Vec2 {
-    const rect = canvas.getBoundingClientRect();
-    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
-  }
-
-  function hitPole(x: number, y: number): PoleSpec | null {
-    const { cx, cy, r } = getLayout();
-    for (const pole of POLES) {
-      const pos = poleScreenPos(pole, cx, cy, r);
-      // ~14×14 hit box around the label centre
-      if (Math.abs(x - pos.x) < 12 && Math.abs(y - pos.y) < 9) return pole;
-    }
-    return null;
-  }
-
-  function commit(t: number, p: number) {
-    theta = clampTheta(t);
-    phi = wrapPhi(p);
-    opts.onChange(theta, phi);
-    draw();
-  }
-
-  function onMouseDown(e: MouseEvent) {
-    if (e.button !== 0) return;
-    const pos = canvasPos(e);
-    dragMovedDistance = 0;
-    lastX = pos.x;
-    lastY = pos.y;
-    dragging = true;
-    canvas.style.cursor = "grabbing";
-    e.preventDefault();
-  }
-
-  function onMouseMove(e: MouseEvent) {
-    if (!dragging) return;
-    const pos = canvasPos(e);
-    const dx = pos.x - lastX;
-    const dy = pos.y - lastY;
-    lastX = pos.x;
-    lastY = pos.y;
-    dragMovedDistance += Math.hypot(dx, dy);
-    // Sensitivity: 1px ≈ 0.012 rad → a full canvas drag (~140px) sweeps ~π/2.
-    const SENS = 0.012;
-    const [t, p] = maybeSnap(theta + dy * SENS, phi + dx * SENS);
-    commit(t, p);
-  }
-
-  function onMouseUp(e: MouseEvent) {
-    if (!dragging) return;
-    dragging = false;
-    canvas.style.cursor = "grab";
-    // Treat as a click on a pole label only if the cursor barely moved
-    if (dragMovedDistance < 4) {
-      const pos = canvasPos(e);
-      const pole = hitPole(pos.x, pos.y);
-      if (pole) {
-        const [t, p] = maybeSnap(pole.theta, pole.phi);
-        commit(t, p);
-      }
-    }
-  }
-
-  function onWheel(e: WheelEvent) {
-    e.preventDefault();
-    const step = opts.isSnapping() ? SNAP_STEP : Math.PI / 64;
-    const dir = e.deltaY > 0 ? 1 : -1;
-    const [t, p] = maybeSnap(theta, phi + dir * step);
-    commit(t, p);
-  }
-
-  canvas.style.cursor = "grab";
-  canvas.style.touchAction = "none";
-  canvas.addEventListener("mousedown", onMouseDown);
-  window.addEventListener("mousemove", onMouseMove);
-  window.addEventListener("mouseup", onMouseUp);
-  canvas.addEventListener("wheel", onWheel, { passive: false });
-
   draw();
 
   return {
     setVector(t: number, p: number) {
-      theta = clampTheta(t);
-      phi = wrapPhi(p);
+      theta = t;
+      phi = p;
       draw();
     },
     setColor(c: string) {
@@ -302,10 +193,7 @@ export function createBlochHUD(
     },
     redraw: draw,
     destroy() {
-      canvas.removeEventListener("mousedown", onMouseDown);
-      window.removeEventListener("mousemove", onMouseMove);
-      window.removeEventListener("mouseup", onMouseUp);
-      canvas.removeEventListener("wheel", onWheel);
+      // No listeners to detach.
     },
   };
 }
