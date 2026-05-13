@@ -11,6 +11,8 @@ import {
   MAX_CHANNELS,
 } from "./channels.js";
 import type { Channel } from "./channels.js";
+import { createBlochHUD } from "./bloch.js";
+import type { BlochHUD } from "./bloch.js";
 
 // Subset of EvaluationResult that drawMeasures cares about. Lets the helper
 // accept either branch of the discriminated union without re-narrowing.
@@ -217,10 +219,8 @@ async function main(): Promise<void> {
     nameInput: HTMLInputElement;
     muteBtn: HTMLButtonElement;
     deleteBtn: HTMLButtonElement;
-    thetaInput: HTMLInputElement;
-    thetaVal: HTMLElement;
-    phiInput: HTMLInputElement;
-    phiVal: HTMLElement;
+    blochCanvas: HTMLCanvasElement;
+    bloch: BlochHUD;
     snapInput: HTMLInputElement;
     waveformSelect: HTMLSelectElement;
     octSelect: HTMLSelectElement;
@@ -245,17 +245,8 @@ async function main(): Promise<void> {
         </div>
       </div>
       <div class="channel-basis">
-        <div class="channel-row">
-          <div class="channel-row-head"><span>θ</span><span class="channel-row-val channel-theta-val"></span></div>
-          <input type="range" class="channel-theta" min="0" max="${Math.PI.toFixed(6)}" step="0.01">
-        </div>
-        <div class="channel-row">
-          <div class="channel-row-head"><span>φ</span><span class="channel-row-val channel-phi-val"></span></div>
-          <input type="range" class="channel-phi" min="0" max="${(2 * Math.PI).toFixed(6)}" step="0.01">
-        </div>
-        <div class="channel-row">
-          <label class="snap-toggle"><input type="checkbox" class="channel-snap"> Snap π/8</label>
-        </div>
+        <canvas class="channel-bloch" width="180" height="180"></canvas>
+        <label class="snap-toggle"><input type="checkbox" class="channel-snap"> Snap π/8</label>
       </div>
       <div class="channel-sound">
         <div class="channel-row">
@@ -296,15 +287,23 @@ async function main(): Promise<void> {
       if (!el) throw new Error(`channel card ${ch.id}: missing ${sel}`);
       return el;
     };
+    const blochCanvas = find<HTMLCanvasElement>(".channel-bloch");
+    const bloch = createBlochHUD(blochCanvas, {
+      color: ch.color,
+      initialTheta: ch.theta,
+      initialPhi: ch.phi,
+      isSnapping: () => channelsStore.get(ch.id)?.snap ?? false,
+      onChange: (t, p) => {
+        channelsStore.update(ch.id, { theta: t, phi: p });
+      },
+    });
     const els: ChannelCardEls = {
       root,
       nameInput: find<HTMLInputElement>(".channel-name"),
       muteBtn: find<HTMLButtonElement>(".channel-mute"),
       deleteBtn: find<HTMLButtonElement>(".channel-delete"),
-      thetaInput: find<HTMLInputElement>(".channel-theta"),
-      thetaVal: find<HTMLElement>(".channel-theta-val"),
-      phiInput: find<HTMLInputElement>(".channel-phi"),
-      phiVal: find<HTMLElement>(".channel-phi-val"),
+      blochCanvas,
+      bloch,
       snapInput: find<HTMLInputElement>(".channel-snap"),
       waveformSelect: find<HTMLSelectElement>(".channel-wave"),
       octSelect: find<HTMLSelectElement>(".channel-oct"),
@@ -317,15 +316,11 @@ async function main(): Promise<void> {
 
     // Seed initial UI state from channel
     els.nameInput.value = ch.name;
-    els.thetaInput.value = String(ch.theta);
-    els.phiInput.value = String(ch.phi);
     els.snapInput.checked = ch.snap;
     els.waveformSelect.value = ch.waveform;
     els.octSelect.value = String(ch.octaveOffset);
     els.decayInput.value = String(ch.decay);
     els.volInput.value = String(ch.volume);
-    els.thetaVal.textContent = formatPi(ch.theta);
-    els.phiVal.textContent = formatPi(ch.phi);
     els.decayVal.textContent = formatPercent(ch.decay);
     els.volVal.textContent = formatPercent(ch.volume);
     if (ch.muted) {
@@ -350,26 +345,8 @@ async function main(): Promise<void> {
       els.root.classList.toggle("muted", muted);
     });
     els.deleteBtn.addEventListener("click", () => {
+      els.bloch.destroy();
       channelsStore.remove(id);
-    });
-
-    const snapStep = Math.PI / 8;
-    function maybeSnap(v: number): number {
-      const current = channelsStore.get(id);
-      if (!current?.snap) return v;
-      return Math.round(v / snapStep) * snapStep;
-    }
-    els.thetaInput.addEventListener("input", () => {
-      const v = maybeSnap(parseFloat(els.thetaInput.value));
-      els.thetaInput.value = String(v);
-      els.thetaVal.textContent = formatPi(v);
-      channelsStore.update(id, { theta: v });
-    });
-    els.phiInput.addEventListener("input", () => {
-      const v = maybeSnap(parseFloat(els.phiInput.value));
-      els.phiInput.value = String(v);
-      els.phiVal.textContent = formatPi(v);
-      channelsStore.update(id, { phi: v });
     });
     els.snapInput.addEventListener("change", () => {
       channelsStore.update(id, { snap: els.snapInput.checked });
@@ -394,10 +371,6 @@ async function main(): Promise<void> {
     });
   }
 
-  function formatPi(rad: number): string {
-    if (Math.abs(rad) < 1e-9) return "0";
-    return (rad / Math.PI).toFixed(2) + "π";
-  }
   function formatPercent(v: number): string {
     if (v <= 0) return "0%";
     return Math.round(v * 100) + "%";

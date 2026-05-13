@@ -600,7 +600,26 @@
   .channel-mute:hover   { color: var(--gold); border-color: var(--gold); }
   .channel-delete:hover { color: var(--coral); border-color: var(--coral); }
   .channel-mute.active  { color: var(--gold); border-color: var(--gold); background: var(--surface-2); }
-  .channel-basis,
+  .channel-basis {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--font-display);
+    font-size: 9px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+  }
+  .channel-bloch {
+    display: block;
+    width: 180px;
+    height: 180px;
+    max-width: 100%;
+    background: var(--void);
+    border: 1px solid var(--surface-3);
+    clip-path: var(--cut-sm);
+  }
   .channel-sound {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
