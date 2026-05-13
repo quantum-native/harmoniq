@@ -1,18 +1,20 @@
 import { initQuantum, createQuantumEngine } from "./quantum.js";
-import type {
-  ChannelDirection,
-  Complex,
-  EvaluationResult,
-  MixedBranch,
-} from "./quantum.js";
+import type { Complex, EvaluationResult, MixedBranch } from "./quantum.js";
+import { createAudioEngine, getNoteNames, getBasisLabels, getKets } from "./audio.js";
+import { createCircuitEditor } from "./circuit.js";
+import type { Circuit, Gate, GateKind } from "./circuit.js";
+import {
+  createChannelsStore,
+  defaultChannels,
+  toAudioConfig,
+  toDirection,
+  MAX_CHANNELS,
+} from "./channels.js";
+import type { Channel } from "./channels.js";
 
 // Subset of EvaluationResult that drawMeasures cares about. Lets the helper
 // accept either branch of the discriminated union without re-narrowing.
 type EvalLike = Pick<EvaluationResult, "channels" | "measures">;
-import { createAudioEngine, getNoteNames, getBasisLabels, getKets } from "./audio.js";
-import type { ChannelAudioConfig, EnvelopeParams } from "./audio.js";
-import { createCircuitEditor } from "./circuit.js";
-import type { Circuit, Gate, GateKind } from "./circuit.js";
 
 function byId<T extends HTMLElement>(id: string): T {
   const el = document.getElementById(id);
@@ -114,32 +116,6 @@ const PRESETS: Record<string, Circuit> = {
   },
 };
 
-// Sampling channels: Bloch directions per channel. For now hard-coded to the
-// pair the v0.3 UI exposed (Z and X). User-defined channels arrive in a later
-// step of the channels refactor.
-const CHANNELS: ChannelDirection[] = [
-  { id: "z", theta: 0, phi: 0 },             // +ẑ — computational basis
-  { id: "x", theta: Math.PI / 2, phi: 0 },   // +x̂ — Hadamard-rotated basis
-];
-
-// Adapter: pull the (Z, X) probability arrays out of the per-channel result
-// shape so the still-Z-and-X-only probability viz keeps working. Removed in
-// step 3 when the viz becomes per-channel.
-function unpackZX(result: EvalLike): { zBasis: number[]; xBasis: number[] } {
-  return {
-    zBasis: result.channels[0]?.probabilities ?? [],
-    xBasis: result.channels[1]?.probabilities ?? [],
-  };
-}
-
-// Adapter: project the evaluation result onto the `Record<id, probs>` shape
-// the N-channel audio engine consumes.
-function toChannelProbs(result: EvalLike): Record<string, number[]> {
-  const out: Record<string, number[]> = {};
-  for (const ch of result.channels) out[ch.id] = ch.probabilities;
-  return out;
-}
-
 let playing = false;
 let playheadStep = 0;
 let lastStepTime = 0;
@@ -166,6 +142,12 @@ async function main(): Promise<void> {
   const audio = createAudioEngine();
   const engine = createQuantumEngine();
   const editor = createCircuitEditor(circuitCanvas, onCircuitChange);
+  const channelsStore = createChannelsStore(defaultChannels());
+  const channelsListEl = byId<HTMLElement>("channels-list");
+  const addChannelBtn = byId<HTMLButtonElement>("add-channel-btn");
+  // Card DOM references keyed by channel id so per-card UI updates (correlation
+  // readouts, value labels) can be applied without re-rendering the whole list.
+  const cardEls = new Map<string, ChannelCardEls>();
 
   // Gate palette: click to select, drag to place
   gateButtons.forEach((btn) => {
@@ -228,67 +210,228 @@ async function main(): Promise<void> {
     speedLabel.textContent = `${speedSlider.value} steps/s`;
   });
 
-  // Sound controls
-  //
-  // The HTML still exposes the flat v0.3 Z/X controls. Translate them here
-  // into a 2-element ChannelAudioConfig[] for the N-channel audio engine.
-  // Step 3 of the channels refactor replaces this with per-channel UI.
-  function envelopeFromDecaySlider(decay: number): EnvelopeParams {
-    if (decay <= 0) {
-      // "off" — hold the note at full target, no decay or release
-      return { attack: 0.015, decay: 0.001, sustain: 1, release: 0 };
-    }
-    // Same shape as the v0.3 engine: 15ms attack, decay to near-zero over
-    // 0.05 + (1 - decay) * 2.0 seconds, no sustain, no release tail.
-    return {
-      attack: 0.015,
-      decay: 0.05 + (1 - decay) * 2.0,
-      sustain: 0.0001,
-      release: 0,
-    };
+  // ── Channel card construction ───────────────────────────────────────
+
+  interface ChannelCardEls {
+    root: HTMLElement;
+    nameInput: HTMLInputElement;
+    muteBtn: HTMLButtonElement;
+    deleteBtn: HTMLButtonElement;
+    thetaInput: HTMLInputElement;
+    thetaVal: HTMLElement;
+    phiInput: HTMLInputElement;
+    phiVal: HTMLElement;
+    snapInput: HTMLInputElement;
+    waveformSelect: HTMLSelectElement;
+    octSelect: HTMLSelectElement;
+    decayInput: HTMLInputElement;
+    decayVal: HTMLElement;
+    volInput: HTMLInputElement;
+    volVal: HTMLElement;
+    corrVal: HTMLElement;
   }
 
-  function syncAudioParams() {
-    const decay = parseFloat(byId<HTMLInputElement>("ctrl-decay").value);
-    const envelope = envelopeFromDecaySlider(decay);
-    const channels: ChannelAudioConfig[] = [
-      {
-        id: "z",
-        waveform: byId<HTMLSelectElement>("ctrl-z-wave").value as OscillatorType,
-        octaveOffset: 0,
-        volume: parseFloat(byId<HTMLInputElement>("ctrl-z-vol").value),
-        envelope,
-        muted: false,
-      },
-      {
-        id: "x",
-        waveform: byId<HTMLSelectElement>("ctrl-x-wave").value as OscillatorType,
-        octaveOffset: parseInt(byId<HTMLSelectElement>("ctrl-x-oct-offset").value),
-        volume: parseFloat(byId<HTMLInputElement>("ctrl-x-vol").value),
-        envelope,
-        muted: false,
-      },
-    ];
+  function buildChannelCard(ch: Channel): ChannelCardEls {
+    const root = document.createElement("div");
+    root.className = "channel-card";
+    root.dataset.id = ch.id;
+    root.style.setProperty("--accent", ch.color);
+    root.innerHTML = `
+      <div class="channel-card-head">
+        <input type="text" class="channel-name" maxlength="24">
+        <div class="channel-card-actions">
+          <button type="button" class="channel-mute" title="Mute">M</button>
+          <button type="button" class="channel-delete" title="Delete" aria-label="Delete channel">×</button>
+        </div>
+      </div>
+      <div class="channel-basis">
+        <div class="channel-row">
+          <div class="channel-row-head"><span>θ</span><span class="channel-row-val channel-theta-val"></span></div>
+          <input type="range" class="channel-theta" min="0" max="${Math.PI.toFixed(6)}" step="0.01">
+        </div>
+        <div class="channel-row">
+          <div class="channel-row-head"><span>φ</span><span class="channel-row-val channel-phi-val"></span></div>
+          <input type="range" class="channel-phi" min="0" max="${(2 * Math.PI).toFixed(6)}" step="0.01">
+        </div>
+        <div class="channel-row">
+          <label class="snap-toggle"><input type="checkbox" class="channel-snap"> Snap π/8</label>
+        </div>
+      </div>
+      <div class="channel-sound">
+        <div class="channel-row">
+          <div class="channel-row-head"><span>Wave</span></div>
+          <select class="channel-wave">
+            <option value="sine">sine</option>
+            <option value="triangle">triangle</option>
+            <option value="square">square</option>
+            <option value="sawtooth">sawtooth</option>
+          </select>
+        </div>
+        <div class="channel-row">
+          <div class="channel-row-head"><span>Oct</span></div>
+          <select class="channel-oct">
+            <option value="-2">−2</option>
+            <option value="-1">−1</option>
+            <option value="0">0</option>
+            <option value="1">+1</option>
+            <option value="2">+2</option>
+          </select>
+        </div>
+        <div class="channel-row">
+          <div class="channel-row-head"><span>Decay</span><span class="channel-row-val channel-decay-val"></span></div>
+          <input type="range" class="channel-decay" min="0" max="1" step="0.01">
+        </div>
+        <div class="channel-row">
+          <div class="channel-row-head"><span>Vol</span><span class="channel-row-val channel-vol-val"></span></div>
+          <input type="range" class="channel-vol" min="0" max="1" step="0.01">
+        </div>
+      </div>
+      <div class="channel-corr">
+        <span>Correlation</span>
+        <span class="channel-corr-val">0.00</span>
+      </div>
+    `;
+    const find = <T extends HTMLElement>(sel: string): T => {
+      const el = root.querySelector<T>(sel);
+      if (!el) throw new Error(`channel card ${ch.id}: missing ${sel}`);
+      return el;
+    };
+    const els: ChannelCardEls = {
+      root,
+      nameInput: find<HTMLInputElement>(".channel-name"),
+      muteBtn: find<HTMLButtonElement>(".channel-mute"),
+      deleteBtn: find<HTMLButtonElement>(".channel-delete"),
+      thetaInput: find<HTMLInputElement>(".channel-theta"),
+      thetaVal: find<HTMLElement>(".channel-theta-val"),
+      phiInput: find<HTMLInputElement>(".channel-phi"),
+      phiVal: find<HTMLElement>(".channel-phi-val"),
+      snapInput: find<HTMLInputElement>(".channel-snap"),
+      waveformSelect: find<HTMLSelectElement>(".channel-wave"),
+      octSelect: find<HTMLSelectElement>(".channel-oct"),
+      decayInput: find<HTMLInputElement>(".channel-decay"),
+      decayVal: find<HTMLElement>(".channel-decay-val"),
+      volInput: find<HTMLInputElement>(".channel-vol"),
+      volVal: find<HTMLElement>(".channel-vol-val"),
+      corrVal: find<HTMLElement>(".channel-corr-val"),
+    };
+
+    // Seed initial UI state from channel
+    els.nameInput.value = ch.name;
+    els.thetaInput.value = String(ch.theta);
+    els.phiInput.value = String(ch.phi);
+    els.snapInput.checked = ch.snap;
+    els.waveformSelect.value = ch.waveform;
+    els.octSelect.value = String(ch.octaveOffset);
+    els.decayInput.value = String(ch.decay);
+    els.volInput.value = String(ch.volume);
+    els.thetaVal.textContent = formatPi(ch.theta);
+    els.phiVal.textContent = formatPi(ch.phi);
+    els.decayVal.textContent = formatPercent(ch.decay);
+    els.volVal.textContent = formatPercent(ch.volume);
+    if (ch.muted) {
+      els.muteBtn.classList.add("active");
+      root.classList.add("muted");
+    }
+
+    wireCardListeners(ch.id, els);
+    return els;
+  }
+
+  function wireCardListeners(id: string, els: ChannelCardEls) {
+    els.nameInput.addEventListener("input", () => {
+      channelsStore.update(id, { name: els.nameInput.value });
+    });
+    els.muteBtn.addEventListener("click", () => {
+      const current = channelsStore.get(id);
+      if (!current) return;
+      const muted = !current.muted;
+      channelsStore.update(id, { muted });
+      els.muteBtn.classList.toggle("active", muted);
+      els.root.classList.toggle("muted", muted);
+    });
+    els.deleteBtn.addEventListener("click", () => {
+      channelsStore.remove(id);
+    });
+
+    const snapStep = Math.PI / 8;
+    function maybeSnap(v: number): number {
+      const current = channelsStore.get(id);
+      if (!current?.snap) return v;
+      return Math.round(v / snapStep) * snapStep;
+    }
+    els.thetaInput.addEventListener("input", () => {
+      const v = maybeSnap(parseFloat(els.thetaInput.value));
+      els.thetaInput.value = String(v);
+      els.thetaVal.textContent = formatPi(v);
+      channelsStore.update(id, { theta: v });
+    });
+    els.phiInput.addEventListener("input", () => {
+      const v = maybeSnap(parseFloat(els.phiInput.value));
+      els.phiInput.value = String(v);
+      els.phiVal.textContent = formatPi(v);
+      channelsStore.update(id, { phi: v });
+    });
+    els.snapInput.addEventListener("change", () => {
+      channelsStore.update(id, { snap: els.snapInput.checked });
+    });
+    els.waveformSelect.addEventListener("change", () => {
+      channelsStore.update(id, {
+        waveform: els.waveformSelect.value as OscillatorType,
+      });
+    });
+    els.octSelect.addEventListener("change", () => {
+      channelsStore.update(id, { octaveOffset: parseInt(els.octSelect.value) });
+    });
+    els.decayInput.addEventListener("input", () => {
+      const v = parseFloat(els.decayInput.value);
+      els.decayVal.textContent = formatPercent(v);
+      channelsStore.update(id, { decay: v });
+    });
+    els.volInput.addEventListener("input", () => {
+      const v = parseFloat(els.volInput.value);
+      els.volVal.textContent = formatPercent(v);
+      channelsStore.update(id, { volume: v });
+    });
+  }
+
+  function formatPi(rad: number): string {
+    if (Math.abs(rad) < 1e-9) return "0";
+    return (rad / Math.PI).toFixed(2) + "π";
+  }
+  function formatPercent(v: number): string {
+    if (v <= 0) return "0%";
+    return Math.round(v * 100) + "%";
+  }
+
+  // Sound controls: just the globals (scale/octave/reverb/master). Per-channel
+  // settings live in the channel cards and flow through syncChannelsToAudio.
+  function syncGlobals() {
     audio.setParams({
       scale: byId<HTMLSelectElement>("ctrl-scale").value,
       rootOctave: parseInt(byId<HTMLSelectElement>("ctrl-octave").value),
       reverb: parseFloat(byId<HTMLInputElement>("ctrl-reverb").value),
       masterVolume: parseFloat(byId<HTMLInputElement>("ctrl-master").value),
-      channels,
     });
-    byId<HTMLElement>("ctrl-decay-val").textContent = decay === 0 ? "off" : Math.round(decay * 100) + "%";
     byId<HTMLElement>("ctrl-reverb-val").textContent = Math.round(parseFloat(byId<HTMLInputElement>("ctrl-reverb").value) * 100) + "%";
-    byId<HTMLElement>("ctrl-z-vol-val").textContent = Math.round(parseFloat(byId<HTMLInputElement>("ctrl-z-vol").value) * 100) + "%";
-    byId<HTMLElement>("ctrl-x-vol-val").textContent = Math.round(parseFloat(byId<HTMLInputElement>("ctrl-x-vol").value) * 100) + "%";
     byId<HTMLElement>("ctrl-master-val").textContent = Math.round(parseFloat(byId<HTMLInputElement>("ctrl-master").value) * 100) + "%";
   }
 
-  byId<HTMLElement>("sound-controls").addEventListener("input", syncAudioParams);
-  byId<HTMLElement>("sound-controls").addEventListener("change", syncAudioParams);
+  function syncChannelsToAudio() {
+    audio.setParams({ channels: channelsStore.list().map(toAudioConfig) });
+  }
 
-  // Push the initial channel set into the audio engine so buses exist before
-  // the first Play. The engine's default channels list is empty.
-  syncAudioParams();
+  byId<HTMLElement>("sound-controls").addEventListener("input", syncGlobals);
+  byId<HTMLElement>("sound-controls").addEventListener("change", syncGlobals);
+
+  // Seed engine + audio from defaults so buses exist before the first Play.
+  syncGlobals();
+  syncChannelsToAudio();
+  // Any change (add/remove or per-channel field) re-pushes audio config and
+  // re-evaluates so the viz and sound reflect the new channels immediately.
+  channelsStore.subscribeAny(() => {
+    syncChannelsToAudio();
+    updateState();
+  });
 
   // Transport
   function startPlayback() {
@@ -332,16 +475,19 @@ async function main(): Promise<void> {
     editor.setPlayheadPosition(step);
 
     try {
-      const result = engine.evaluate(circuit, step, CHANNELS);
-      audio.updateProbabilities(toChannelProbs(result));
-      const { zBasis, xBasis } = unpackZX(result);
-      drawViz(zBasis, xBasis, result.numQubits);
+      const channels = channelsStore.list();
+      const result = engine.evaluate(circuit, step, channels.map(toDirection));
+      const perChannel: Record<string, number[]> = {};
+      for (const ch of result.channels) perChannel[ch.id] = ch.probabilities;
+      audio.updateProbabilities(perChannel);
+      drawViz(result, channels, result.numQubits);
       if (result.isMixed) {
         drawMixedState(result.branches, result.numQubits);
       } else {
         drawStateVector(result.stateVector, result.numQubits);
       }
-      drawMeasures(result);
+      drawMeasures(result.measures.entanglement);
+      updateChannelCorrelations(result);
     } catch (err) {
       console.error("Evaluation error:", err);
       const msg = err instanceof Error ? err.message : String(err);
@@ -374,20 +520,24 @@ async function main(): Promise<void> {
     return c;
   })();
 
-  function drawViz(zBasis: number[], xBasis: number[], numQubits: number) {
+  function drawViz(
+    result: EvalLike,
+    channels: readonly Channel[],
+    numQubits: number,
+  ) {
     const numStates = 1 << numQubits;
+    const numChannels = Math.max(1, channels.length);
     const dpr = devicePixelRatio;
-    // Fit to container width
     const containerW = vizCanvas.parentElement?.clientWidth ?? 0;
     const w = Math.max(360, containerW);
     const h = 220;
 
-    // Compute bar geometry to fit the available width
+    // Geometry: each basis state gets a group; each group fits N bars side by side.
     const usableW = w - 40;
     const groupGap = numStates <= 8 ? 12 : numStates <= 16 ? 6 : 3;
     const groupW = (usableW - (numStates - 1) * groupGap) / numStates;
-    const gap = Math.max(2, Math.min(8, groupW * 0.12));
-    const barW = (groupW - gap) / 2;
+    const innerGap = Math.max(1, Math.min(6, groupW * 0.08));
+    const barW = Math.max(1, (groupW - innerGap * (numChannels - 1)) / numChannels);
     const totalW = numStates * groupW + (numStates - 1) * groupGap;
 
     vizCanvas.width = w * dpr;
@@ -415,51 +565,45 @@ async function main(): Promise<void> {
 
     const startX = (w - totalW) / 2;
 
-    const ap = audio.getParams();
-    const zWave = ap.channels.find((c) => c.id === "z")?.waveform ?? "sine";
-    const xWave = ap.channels.find((c) => c.id === "x")?.waveform ?? "sine";
-    vizCtx.fillStyle = "#22d3ee";
+    // Channel legend
     vizCtx.globalAlpha = 0.8;
     vizCtx.font = "10px 'Chakra Petch', monospace";
     vizCtx.textAlign = "center";
-    vizCtx.fillText(`Z-BASIS — ${zWave.toUpperCase()}`, w * 0.32, 16);
-    vizCtx.fillStyle = "#fbbf24";
-    vizCtx.fillText(`X-BASIS — ${xWave.toUpperCase()}`, w * 0.68, 16);
+    const legendStep = w / (channels.length + 1);
+    channels.forEach((ch, idx) => {
+      vizCtx.fillStyle = ch.color;
+      vizCtx.fillText(ch.name.toUpperCase(), legendStep * (idx + 1), 16);
+    });
     vizCtx.globalAlpha = 1;
 
     const basisLabels = getBasisLabels(numQubits);
+    const ap = audio.getParams();
     const noteNames = getNoteNames(ap.scale, ap.rootOctave, numStates);
     const labelFont = numStates <= 8 ? "9px" : numStates <= 16 ? "7px" : "6px";
 
     for (let i = 0; i < numStates; i++) {
-      const x = startX + i * (groupW + groupGap);
+      const groupX = startX + i * (groupW + groupGap);
 
-      const zProb = zBasis[i] ?? 0;
-      const xProb = xBasis[i] ?? 0;
-
-      const zH = zProb * maxH;
-      // Z bar with glow
-      vizCtx.shadowColor = "#22d3ee";
-      vizCtx.shadowBlur = zProb > 0.05 ? 8 : 0;
-      vizCtx.fillStyle = "#22d3ee";
-      vizCtx.globalAlpha = 0.85;
-      vizCtx.fillRect(x, baseY - zH, barW, zH);
-
-      const xH = xProb * maxH;
-      vizCtx.shadowColor = "#fbbf24";
-      vizCtx.shadowBlur = xProb > 0.05 ? 8 : 0;
-      vizCtx.fillStyle = "#fbbf24";
-      vizCtx.fillRect(x + barW + gap, baseY - xH, barW, xH);
-
+      channels.forEach((ch, cIdx) => {
+        const channelResult = result.channels[cIdx];
+        const prob = channelResult?.probabilities[i] ?? 0;
+        const barH = prob * maxH;
+        const x = groupX + cIdx * (barW + innerGap);
+        vizCtx.shadowColor = ch.color;
+        vizCtx.shadowBlur = prob > 0.05 ? 8 : 0;
+        vizCtx.fillStyle = ch.color;
+        vizCtx.globalAlpha = 0.85;
+        vizCtx.fillRect(x, baseY - barH, barW, barH);
+      });
       vizCtx.shadowBlur = 0;
       vizCtx.globalAlpha = 1;
 
       vizCtx.fillStyle = "#475569";
       vizCtx.font = labelFont + " 'Chakra Petch', monospace";
       vizCtx.textAlign = "center";
-      vizCtx.fillText(basisLabels[i] ?? "", x + groupW / 2, baseY + 11);
+      vizCtx.fillText(basisLabels[i] ?? "", groupX + groupW / 2, baseY + 11);
       vizCtx.fillStyle = "#64748b";
-      vizCtx.fillText(noteNames[i] ?? "", x + groupW / 2, baseY + 21);
+      vizCtx.fillText(noteNames[i] ?? "", groupX + groupW / 2, baseY + 21);
     }
   }
 
@@ -496,38 +640,43 @@ async function main(): Promise<void> {
     wfCtx.fillStyle = "#0c1018";
     wfCtx.fillRect(0, 0, WF_W, WF_H);
 
-    const laneH = WF_H / 3;
+    const channels = channelsStore.list();
+    const numLanes = channels.length + 1; // + 1 for the mixed master lane
+    const laneH = WF_H / numLanes;
 
     wfCtx.font = "9px 'Chakra Petch', monospace";
     wfCtx.textAlign = "left";
 
     const analysers = audio.getAnalysers();
-    const zAn = analysers.channels.get("z");
-    const xAn = analysers.channels.get("x");
     const masterAn = analysers.master;
 
-    if (zAn && xAn && masterAn) {
-      const bufLen = zAn.frequencyBinCount;
-      const zData = new Float32Array(bufLen);
-      const xData = new Float32Array(bufLen);
-      const masterData = new Float32Array(bufLen);
-      zAn.getFloatTimeDomainData(zData);
-      xAn.getFloatTimeDomainData(xData);
-      masterAn.getFloatTimeDomainData(masterData);
+    channels.forEach((ch, idx) => {
+      const yOffset = idx * laneH;
+      const an = analysers.channels.get(ch.id);
+      const label = ch.name.toUpperCase();
+      if (an) {
+        const bufLen = an.frequencyBinCount;
+        const data = new Float32Array(bufLen);
+        an.getFloatTimeDomainData(data);
+        drawWave(data, bufLen, yOffset, laneH, ch.color, label);
+      } else {
+        drawWaveEmpty(yOffset, laneH, ch.color, label);
+      }
+    });
 
-      drawWave(zData, bufLen, 0, laneH, "#22d3ee", "Z-BASIS");
-      drawWave(xData, bufLen, laneH, laneH, "#fbbf24", "X-BASIS");
-      drawWave(masterData, bufLen, laneH * 2, laneH, "#94a3b8", "MIXED OUT");
+    const masterY = channels.length * laneH;
+    if (masterAn) {
+      const bufLen = masterAn.frequencyBinCount;
+      const data = new Float32Array(bufLen);
+      masterAn.getFloatTimeDomainData(data);
+      drawWave(data, bufLen, masterY, laneH, "#94a3b8", "MIXED OUT");
     } else {
-      // Empty state — show lane labels and center lines
-      drawWaveEmpty(0, laneH, "#22d3ee", "Z-BASIS");
-      drawWaveEmpty(laneH, laneH, "#fbbf24", "X-BASIS");
-      drawWaveEmpty(laneH * 2, laneH, "#94a3b8", "MIXED OUT");
+      drawWaveEmpty(masterY, laneH, "#94a3b8", "MIXED OUT");
     }
 
     wfCtx.strokeStyle = "#182035";
     wfCtx.lineWidth = 0.5;
-    for (let i = 1; i < 3; i++) {
+    for (let i = 1; i < numLanes; i++) {
       wfCtx.beginPath();
       wfCtx.moveTo(0, laneH * i);
       wfCtx.lineTo(WF_W, laneH * i);
@@ -735,56 +884,85 @@ async function main(): Promise<void> {
     return `e^{i${(deg * Math.PI / 180).toFixed(2)}}`;
   }
 
-  // Measures display
+  // Measures display — channel-agnostic entanglement. Per-channel correlation
+  // is shown inside each channel card.
   const entBar = byId<HTMLElement>("ent-bar");
   const entVal = byId<HTMLElement>("ent-val");
-  const zCorrBar = byId<HTMLElement>("z-corr-bar");
-  const zCorrVal = byId<HTMLElement>("z-corr-val");
-  const xCorrBar = byId<HTMLElement>("x-corr-bar");
-  const xCorrVal = byId<HTMLElement>("x-corr-val");
 
-  function drawMeasures(result: EvalLike | null | undefined) {
-    if (!result) {
+  function drawMeasures(entanglement: number | null) {
+    if (entanglement === null) {
       entBar.style.width = "0%";
       entVal.textContent = "0.00";
-      zCorrBar.style.width = "0%";
-      zCorrVal.textContent = "0.00";
-      xCorrBar.style.width = "0%";
-      xCorrVal.textContent = "0.00";
       return;
     }
-    const ent = Math.min(result.measures.entanglement, 1);
-    const zc = Math.min(result.channels[0]?.correlation ?? 0, 1);
-    const xc = Math.min(result.channels[1]?.correlation ?? 0, 1);
+    const ent = Math.min(entanglement, 1);
     entBar.style.width = (ent * 100) + "%";
     entVal.textContent = ent.toFixed(2);
-    zCorrBar.style.width = (zc * 100) + "%";
-    zCorrVal.textContent = zc.toFixed(2);
-    xCorrBar.style.width = (xc * 100) + "%";
-    xCorrVal.textContent = xc.toFixed(2);
+  }
+
+  function updateChannelCorrelations(result: EvalLike) {
+    for (const channel of result.channels) {
+      const els = cardEls.get(channel.id);
+      if (els) els.corrVal.textContent = channel.correlation.toFixed(2);
+    }
   }
 
   // Resize handling
   window.addEventListener("resize", () => {
-    // Re-evaluate to redraw at new sizes
     const circuit = editor.getCircuit();
-    const result = engine.evaluate(circuit, -1, CHANNELS);
-    const { zBasis, xBasis } = unpackZX(result);
-    drawViz(zBasis, xBasis, result.numQubits);
+    const channels = channelsStore.list();
+    const result = engine.evaluate(circuit, -1, channels.map(toDirection));
+    drawViz(result, channels, result.numQubits);
     drawWaveforms();
   });
 
-  // Initial draws — evaluate the empty circuit at step -1 (just |0...0⟩)
-  const initial = engine.evaluate(editor.getCircuit(), -1, CHANNELS);
-  const initialZX = unpackZX(initial);
-  drawViz(initialZX.zBasis, initialZX.xBasis, initial.numQubits);
+  // Initial render: cards, then evaluate the empty circuit at step -1
+  // (just |0...0⟩) so the viz/measures show something on first paint.
+  renderInitialChannels();
+  const initialChannels = channelsStore.list();
+  const initial = engine.evaluate(editor.getCircuit(), -1, initialChannels.map(toDirection));
+  drawViz(initial, initialChannels, initial.numQubits);
   if (initial.isMixed) {
     drawMixedState(initial.branches, initial.numQubits);
   } else {
     drawStateVector(initial.stateVector, initial.numQubits);
   }
-  drawMeasures(initial);
+  drawMeasures(initial.measures.entanglement);
+  updateChannelCorrelations(initial);
   drawWaveforms();
+
+  // ── Channel card rendering ──────────────────────────────────────────
+
+  function renderInitialChannels() {
+    syncCardsToStore();
+  }
+
+  function syncCardsToStore() {
+    const live = channelsStore.list();
+    const liveIds = new Set(live.map((c) => c.id));
+    // Remove cards whose channels are gone
+    for (const [id, els] of cardEls.entries()) {
+      if (!liveIds.has(id)) {
+        els.root.remove();
+        cardEls.delete(id);
+      }
+    }
+    // Add cards for new channels (in store order)
+    for (const ch of live) {
+      if (!cardEls.has(ch.id)) {
+        const card = buildChannelCard(ch);
+        channelsListEl.appendChild(card.root);
+        cardEls.set(ch.id, card);
+      }
+    }
+    addChannelBtn.disabled = live.length >= MAX_CHANNELS;
+  }
+
+  addChannelBtn.addEventListener("click", () => {
+    channelsStore.add();
+  });
+
+  channelsStore.subscribeStructure(syncCardsToStore);
 }
 
 main();

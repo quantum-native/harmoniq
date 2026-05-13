@@ -543,6 +543,156 @@
     letter-spacing: 0.04em;
   }
 
+  /* ── Channels list ────────────────────────────────────────────────── */
+  .channels-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .channel-card {
+    background: var(--surface);
+    border: 1px solid var(--surface-3);
+    border-left: 2px solid var(--accent, var(--text-muted));
+    padding: 12px 14px;
+    clip-path: var(--cut-md);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    position: relative;
+  }
+  .channel-card.muted { opacity: 0.5; }
+  .channel-card-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .channel-name {
+    flex: 1;
+    background: transparent;
+    border: 0;
+    border-bottom: 1px solid transparent;
+    color: var(--text);
+    font-family: var(--font-display);
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    padding: 2px 0;
+    text-transform: uppercase;
+    min-width: 0;
+  }
+  .channel-name:hover  { border-bottom-color: var(--surface-3); }
+  .channel-name:focus  { outline: none; border-bottom-color: var(--accent, var(--cyan-bright)); }
+  .channel-card-actions { display: flex; gap: 4px; }
+  .channel-mute,
+  .channel-delete {
+    background: var(--void);
+    border: 1px solid var(--surface-3);
+    color: var(--text-dim);
+    font-family: var(--font-display);
+    font-size: 10px;
+    width: 24px;
+    height: 22px;
+    cursor: pointer;
+    display: inline-grid;
+    place-items: center;
+    transition: all 0.18s var(--ease);
+  }
+  .channel-mute:hover   { color: var(--gold); border-color: var(--gold); }
+  .channel-delete:hover { color: var(--coral); border-color: var(--coral); }
+  .channel-mute.active  { color: var(--gold); border-color: var(--gold); background: var(--surface-2); }
+  .channel-basis,
+  .channel-sound {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 6px 12px;
+    font-family: var(--font-display);
+    font-size: 9px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+  }
+  .channel-row {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .channel-row-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 6px;
+  }
+  .channel-row input[type="range"] {
+    width: 100%;
+    height: 3px;
+    accent-color: var(--accent, var(--cyan-bright));
+  }
+  .channel-row select {
+    background: var(--void);
+    border: 1px solid var(--surface-3);
+    color: var(--text);
+    font-family: var(--font-display);
+    font-size: 11px;
+    padding: 3px 6px;
+    cursor: pointer;
+    transition: border-color 0.2s var(--ease);
+  }
+  .channel-row select:hover { border-color: var(--border-bright); }
+  .channel-row select:focus { outline: none; border-color: var(--accent, var(--cyan-bright)); }
+  .channel-row-val {
+    color: var(--accent, var(--cyan-bright));
+    font-variant-numeric: tabular-nums;
+  }
+  .snap-toggle {
+    display: inline-flex !important;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+  }
+  .snap-toggle input { accent-color: var(--accent, var(--cyan-bright)); }
+  .channel-corr {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-family: var(--font-display);
+    font-size: 9px;
+    color: var(--text-faint);
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    border-top: 1px solid var(--surface-3);
+    padding-top: 6px;
+  }
+  .channel-corr-val {
+    color: var(--accent, var(--cyan-bright));
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+  }
+  .add-channel-btn {
+    background: var(--surface);
+    border: 1px dashed var(--surface-3);
+    color: var(--text-dim);
+    font-family: var(--font-display);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    padding: 8px 14px;
+    cursor: pointer;
+    clip-path: var(--cut-sm);
+    transition: all 0.25s var(--ease);
+    align-self: flex-start;
+  }
+  .add-channel-btn:hover {
+    color: var(--text);
+    background: var(--surface-2);
+    border-color: var(--border-bright);
+  }
+  .add-channel-btn:disabled {
+    color: var(--text-faint);
+    cursor: not-allowed;
+    border-style: dotted;
+  }
+
   /* ── State vector display ─────────────────────────────────────────── */
   .statevector {
     font-family: var(--font-display);
@@ -839,24 +989,6 @@
         <span class="section-label"><span class="num">04</span> Instrument</span>
         <div class="sound-controls" id="sound-controls">
           <div class="ctrl-group">
-            <label>Z Wave</label>
-            <select id="ctrl-z-wave">
-              <option value="sine">sine</option>
-              <option value="triangle">triangle</option>
-              <option value="square">square</option>
-              <option value="sawtooth">sawtooth</option>
-            </select>
-          </div>
-          <div class="ctrl-group">
-            <label>X Wave</label>
-            <select id="ctrl-x-wave">
-              <option value="sine">sine</option>
-              <option value="triangle" selected>triangle</option>
-              <option value="square">square</option>
-              <option value="sawtooth">sawtooth</option>
-            </select>
-          </div>
-          <div class="ctrl-group">
             <label>Scale</label>
             <select id="ctrl-scale">
               <option value="C major" selected>C major</option>
@@ -880,33 +1012,9 @@
             </select>
           </div>
           <div class="ctrl-group">
-            <label>X Oct</label>
-            <select id="ctrl-x-oct-offset">
-              <option value="0">same</option>
-              <option value="1" selected>+1</option>
-              <option value="2">+2</option>
-              <option value="-1">-1</option>
-            </select>
-          </div>
-          <div class="ctrl-group">
-            <label>Decay</label>
-            <input type="range" id="ctrl-decay" min="0" max="1" step="0.01" value="0.1">
-            <span class="ctrl-value" id="ctrl-decay-val">10%</span>
-          </div>
-          <div class="ctrl-group">
             <label>Reverb</label>
             <input type="range" id="ctrl-reverb" min="0" max="1" step="0.01" value="0.2">
             <span class="ctrl-value" id="ctrl-reverb-val">20%</span>
-          </div>
-          <div class="ctrl-group">
-            <label>Z Vol</label>
-            <input type="range" id="ctrl-z-vol" min="0" max="1" step="0.01" value="0.8">
-            <span class="ctrl-value" id="ctrl-z-vol-val">80%</span>
-          </div>
-          <div class="ctrl-group">
-            <label>X Vol</label>
-            <input type="range" id="ctrl-x-vol" min="0" max="1" step="0.01" value="0.5">
-            <span class="ctrl-value" id="ctrl-x-vol-val">50%</span>
           </div>
           <div class="ctrl-group">
             <label>Master</label>
@@ -916,11 +1024,18 @@
         </div>
       </div>
 
+      <div class="panel-section">
+        <span class="section-label"><span class="num">05</span> Channels</span>
+        <div class="channels-list" id="channels-list"></div>
+        <button id="add-channel-btn" class="add-channel-btn">+ Add Channel</button>
+        <p class="hint">Each channel samples the state along its Bloch vector. Z is the computational basis; X is the Hadamard basis. Add more for other angles.</p>
+      </div>
+
     </div>
 
     <div class="analysis-column">
       <div class="panel-section">
-        <span class="section-label"><span class="num">05</span> Probability</span>
+        <span class="section-label"><span class="num">06</span> Probability</span>
         <canvas id="viz-canvas"></canvas>
         <div class="measures" id="measures">
           <div class="measure">
@@ -928,26 +1043,16 @@
             <div class="measure-bar-track"><div class="measure-bar entanglement-bar" id="ent-bar"></div></div>
             <span class="measure-value" id="ent-val">0.00</span>
           </div>
-          <div class="measure">
-            <span class="measure-label">Z Correlation</span>
-            <div class="measure-bar-track"><div class="measure-bar z-corr-bar" id="z-corr-bar"></div></div>
-            <span class="measure-value" id="z-corr-val">0.00</span>
-          </div>
-          <div class="measure">
-            <span class="measure-label">X Correlation</span>
-            <div class="measure-bar-track"><div class="measure-bar x-corr-bar" id="x-corr-bar"></div></div>
-            <span class="measure-value" id="x-corr-val">0.00</span>
-          </div>
         </div>
       </div>
 
       <div class="panel-section">
-        <span class="section-label"><span class="num">06</span> Waveforms</span>
+        <span class="section-label"><span class="num">07</span> Waveforms</span>
         <canvas id="waveform-canvas"></canvas>
       </div>
 
       <div class="panel-section">
-        <span class="section-label"><span class="num">07</span> State Vector</span>
+        <span class="section-label"><span class="num">08</span> State Vector</span>
         <div id="statevector" class="statevector">
           <span class="sv-label">|ψ⟩ =</span> <span class="sv-ket">|000⟩</span>
         </div>
@@ -1017,7 +1122,7 @@
             Each basis state (2<sup>n</sup> for <em>n</em> qubits) is assigned
             a note from the selected scale, extending into higher octaves as
             needed. The mapping adapts when you change the scale, root octave,
-            qubit count, or X-basis octave offset in the sound controls.
+            qubit count, or a channel's octave offset.
           </p>
           <p>
             All oscillators run continuously. The probability of
@@ -1030,13 +1135,8 @@
         </div>
 
         <div class="explainer-section">
-          <h2>Sound Controls</h2>
+          <h2>Instrument (Global)</h2>
           <ul>
-            <li>
-              <strong>Z wave / X wave</strong> — waveform for each basis
-              layer: sine (pure), triangle (warm overtones), square (hollow,
-              buzzy), or sawtooth (bright, harsh).
-            </li>
             <li>
               <strong>Scale</strong> — which musical scale the basis
               states map onto. Eight options from C major to phrygian.
@@ -1046,20 +1146,51 @@
               octaves produce deep drones; higher octaves are bell-like.
             </li>
             <li>
-              <strong>X octave</strong> — pitch offset for the X-basis
-              layer relative to the root. Default +1 separates the two layers.
+              <strong>Reverb</strong> — delay-feedback reverb with a
+              lowpass filter on the tail. Applies to all channels.
+            </li>
+            <li>
+              <strong>Master</strong> — output volume after the mix.
+            </li>
+          </ul>
+        </div>
+
+        <div class="explainer-section">
+          <h2>Channels</h2>
+          <p>
+            Each channel samples the quantum state along a Bloch vector
+            <em>(θ, φ)</em> applied to every qubit, then drives its own
+            oscillator bank with the resulting probabilities. <strong>Z</strong>
+            is the computational basis (θ=0); <strong>X</strong> is the
+            Hadamard-rotated basis (θ=π/2, φ=0). Add up to four channels with
+            tilted vectors to hear what's between.
+          </p>
+          <ul>
+            <li>
+              <strong>θ / φ</strong> — Bloch direction in radians. Snap π/8
+              quantises rotation to multiples of π/8 (the same grid H/S/T
+              naturally reach).
+            </li>
+            <li>
+              <strong>Wave</strong> — sine (pure), triangle (warm overtones),
+              square (hollow, buzzy), or sawtooth (bright, harsh).
+            </li>
+            <li>
+              <strong>Oct</strong> — pitch offset from the global root octave.
             </li>
             <li>
               <strong>Decay</strong> — note attenuation. At 0, notes sustain
               as a drone. Higher values give pad-like tails or short plucks.
             </li>
             <li>
-              <strong>Reverb</strong> — delay-feedback reverb with a
-              lowpass filter on the tail.
+              <strong>Vol</strong> — per-channel volume into the master mix.
             </li>
             <li>
-              <strong>Z / X / master volume</strong> — independent
-              volume for each basis bus and the master output.
+              <strong>M / ×</strong> — mute / delete the channel.
+            </li>
+            <li>
+              <strong>Correlation</strong> — pairwise normalised mutual
+              information of basis outcomes in this channel's basis.
             </li>
           </ul>
         </div>
