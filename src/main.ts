@@ -10,6 +10,7 @@ import type {
 // accept either branch of the discriminated union without re-narrowing.
 type EvalLike = Pick<EvaluationResult, "channels" | "measures">;
 import { createAudioEngine, getNoteNames, getBasisLabels, getKets } from "./audio.js";
+import type { ChannelAudioConfig, EnvelopeParams } from "./audio.js";
 import { createCircuitEditor } from "./circuit.js";
 import type { Circuit, Gate, GateKind } from "./circuit.js";
 
@@ -122,12 +123,21 @@ const CHANNELS: ChannelDirection[] = [
 ];
 
 // Adapter: pull the (Z, X) probability arrays out of the per-channel result
-// shape so the still-fixed-bus audio engine and viz keep working.
+// shape so the still-Z-and-X-only probability viz keeps working. Removed in
+// step 3 when the viz becomes per-channel.
 function unpackZX(result: EvalLike): { zBasis: number[]; xBasis: number[] } {
   return {
     zBasis: result.channels[0]?.probabilities ?? [],
     xBasis: result.channels[1]?.probabilities ?? [],
   };
+}
+
+// Adapter: project the evaluation result onto the `Record<id, probs>` shape
+// the N-channel audio engine consumes.
+function toChannelProbs(result: EvalLike): Record<string, number[]> {
+  const out: Record<string, number[]> = {};
+  for (const ch of result.channels) out[ch.id] = ch.probabilities;
+  return out;
 }
 
 let playing = false;
@@ -219,23 +229,54 @@ async function main(): Promise<void> {
   });
 
   // Sound controls
+  //
+  // The HTML still exposes the flat v0.3 Z/X controls. Translate them here
+  // into a 2-element ChannelAudioConfig[] for the N-channel audio engine.
+  // Step 3 of the channels refactor replaces this with per-channel UI.
+  function envelopeFromDecaySlider(decay: number): EnvelopeParams {
+    if (decay <= 0) {
+      // "off" — hold the note at full target, no decay or release
+      return { attack: 0.015, decay: 0.001, sustain: 1, release: 0 };
+    }
+    // Same shape as the v0.3 engine: 15ms attack, decay to near-zero over
+    // 0.05 + (1 - decay) * 2.0 seconds, no sustain, no release tail.
+    return {
+      attack: 0.015,
+      decay: 0.05 + (1 - decay) * 2.0,
+      sustain: 0.0001,
+      release: 0,
+    };
+  }
+
   function syncAudioParams() {
-    const zWave = byId<HTMLSelectElement>("ctrl-z-wave").value as OscillatorType;
-    const xWave = byId<HTMLSelectElement>("ctrl-x-wave").value as OscillatorType;
+    const decay = parseFloat(byId<HTMLInputElement>("ctrl-decay").value);
+    const envelope = envelopeFromDecaySlider(decay);
+    const channels: ChannelAudioConfig[] = [
+      {
+        id: "z",
+        waveform: byId<HTMLSelectElement>("ctrl-z-wave").value as OscillatorType,
+        octaveOffset: 0,
+        volume: parseFloat(byId<HTMLInputElement>("ctrl-z-vol").value),
+        envelope,
+        muted: false,
+      },
+      {
+        id: "x",
+        waveform: byId<HTMLSelectElement>("ctrl-x-wave").value as OscillatorType,
+        octaveOffset: parseInt(byId<HTMLSelectElement>("ctrl-x-oct-offset").value),
+        volume: parseFloat(byId<HTMLInputElement>("ctrl-x-vol").value),
+        envelope,
+        muted: false,
+      },
+    ];
     audio.setParams({
-      zWaveform: zWave,
-      xWaveform: xWave,
       scale: byId<HTMLSelectElement>("ctrl-scale").value,
       rootOctave: parseInt(byId<HTMLSelectElement>("ctrl-octave").value),
-      xOctaveOffset: parseInt(byId<HTMLSelectElement>("ctrl-x-oct-offset").value),
-      decay: parseFloat(byId<HTMLInputElement>("ctrl-decay").value),
       reverb: parseFloat(byId<HTMLInputElement>("ctrl-reverb").value),
-      zVolume: parseFloat(byId<HTMLInputElement>("ctrl-z-vol").value),
-      xVolume: parseFloat(byId<HTMLInputElement>("ctrl-x-vol").value),
       masterVolume: parseFloat(byId<HTMLInputElement>("ctrl-master").value),
+      channels,
     });
-    const d = parseFloat(byId<HTMLInputElement>("ctrl-decay").value);
-    byId<HTMLElement>("ctrl-decay-val").textContent = d === 0 ? "off" : Math.round(d * 100) + "%";
+    byId<HTMLElement>("ctrl-decay-val").textContent = decay === 0 ? "off" : Math.round(decay * 100) + "%";
     byId<HTMLElement>("ctrl-reverb-val").textContent = Math.round(parseFloat(byId<HTMLInputElement>("ctrl-reverb").value) * 100) + "%";
     byId<HTMLElement>("ctrl-z-vol-val").textContent = Math.round(parseFloat(byId<HTMLInputElement>("ctrl-z-vol").value) * 100) + "%";
     byId<HTMLElement>("ctrl-x-vol-val").textContent = Math.round(parseFloat(byId<HTMLInputElement>("ctrl-x-vol").value) * 100) + "%";
@@ -244,6 +285,10 @@ async function main(): Promise<void> {
 
   byId<HTMLElement>("sound-controls").addEventListener("input", syncAudioParams);
   byId<HTMLElement>("sound-controls").addEventListener("change", syncAudioParams);
+
+  // Push the initial channel set into the audio engine so buses exist before
+  // the first Play. The engine's default channels list is empty.
+  syncAudioParams();
 
   // Transport
   function startPlayback() {
@@ -288,8 +333,8 @@ async function main(): Promise<void> {
 
     try {
       const result = engine.evaluate(circuit, step, CHANNELS);
+      audio.updateProbabilities(toChannelProbs(result));
       const { zBasis, xBasis } = unpackZX(result);
-      audio.updateProbabilities(zBasis, xBasis);
       drawViz(zBasis, xBasis, result.numQubits);
       if (result.isMixed) {
         drawMixedState(result.branches, result.numQubits);
@@ -371,13 +416,15 @@ async function main(): Promise<void> {
     const startX = (w - totalW) / 2;
 
     const ap = audio.getParams();
+    const zWave = ap.channels.find((c) => c.id === "z")?.waveform ?? "sine";
+    const xWave = ap.channels.find((c) => c.id === "x")?.waveform ?? "sine";
     vizCtx.fillStyle = "#22d3ee";
     vizCtx.globalAlpha = 0.8;
     vizCtx.font = "10px 'Chakra Petch', monospace";
     vizCtx.textAlign = "center";
-    vizCtx.fillText(`Z-BASIS — ${ap.zWaveform.toUpperCase()}`, w * 0.32, 16);
+    vizCtx.fillText(`Z-BASIS — ${zWave.toUpperCase()}`, w * 0.32, 16);
     vizCtx.fillStyle = "#fbbf24";
-    vizCtx.fillText(`X-BASIS — ${ap.xWaveform.toUpperCase()}`, w * 0.68, 16);
+    vizCtx.fillText(`X-BASIS — ${xWave.toUpperCase()}`, w * 0.68, 16);
     vizCtx.globalAlpha = 1;
 
     const basisLabels = getBasisLabels(numQubits);
@@ -455,16 +502,18 @@ async function main(): Promise<void> {
     wfCtx.textAlign = "left";
 
     const analysers = audio.getAnalysers();
-    const hasAnalysers = analysers.z && analysers.x && analysers.master;
+    const zAn = analysers.channels.get("z");
+    const xAn = analysers.channels.get("x");
+    const masterAn = analysers.master;
 
-    if (hasAnalysers && analysers.z && analysers.x && analysers.master) {
-      const bufLen = analysers.z.frequencyBinCount;
+    if (zAn && xAn && masterAn) {
+      const bufLen = zAn.frequencyBinCount;
       const zData = new Float32Array(bufLen);
       const xData = new Float32Array(bufLen);
       const masterData = new Float32Array(bufLen);
-      analysers.z.getFloatTimeDomainData(zData);
-      analysers.x.getFloatTimeDomainData(xData);
-      analysers.master.getFloatTimeDomainData(masterData);
+      zAn.getFloatTimeDomainData(zData);
+      xAn.getFloatTimeDomainData(xData);
+      masterAn.getFloatTimeDomainData(masterData);
 
       drawWave(zData, bufLen, 0, laneH, "#22d3ee", "Z-BASIS");
       drawWave(xData, bufLen, laneH, laneH, "#fbbf24", "X-BASIS");

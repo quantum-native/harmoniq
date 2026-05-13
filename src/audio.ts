@@ -65,51 +65,64 @@ export function getKets(n: number): string[] {
   const count = 1 << n;
   const kets: string[] = [];
   for (let i = 0; i < count; i++) {
-    kets.push("|" + i.toString(2).padStart(n, "0") + "\u27E9");
+    kets.push("|" + i.toString(2).padStart(n, "0") + "⟩");
   }
   return kets;
 }
 
-export interface AudioParams {
-  zWaveform: OscillatorType;
-  xWaveform: OscillatorType;
-  zVolume: number;
-  xVolume: number;
-  masterVolume: number;
+export interface EnvelopeParams {
+  attack: number;
   decay: number;
-  reverb: number;
+  sustain: number;
+  release: number;
+}
+
+/** Per-channel audio settings. Each channel owns its own oscillator bank. */
+export interface ChannelAudioConfig {
+  id: string;
+  waveform: OscillatorType;
+  /** Pitch offset from the global root octave, in octaves. */
+  octaveOffset: number;
+  volume: number;
+  envelope: EnvelopeParams;
+  muted: boolean;
+}
+
+export interface AudioParams {
   scale: string;
   rootOctave: number;
-  xOctaveOffset: number;
   numQubits: number;
+  reverb: number;
+  masterVolume: number;
+  channels: ChannelAudioConfig[];
 }
 
 export interface AudioAnalysers {
-  z: AnalyserNode | null;
-  x: AnalyserNode | null;
+  channels: Map<string, AnalyserNode>;
   master: AnalyserNode | null;
 }
 
 export interface AudioEngine {
   start(): void;
   stop(): void;
-  updateProbabilities(zBasis: ArrayLike<number>, xBasis: ArrayLike<number>): void;
+  /** Drive each channel's gains from per-channel probability arrays, keyed by id. */
+  updateProbabilities(perChannel: Record<string, ArrayLike<number>>): void;
   getAnalysers(): AudioAnalysers;
   setParams(newParams: Partial<AudioParams>): void;
   getParams(): AudioParams;
 }
 
+interface ChannelBus {
+  config: ChannelAudioConfig;
+  oscillators: OscillatorNode[];
+  gains: GainNode[];
+  bus: GainNode;
+  analyser: AnalyserNode;
+}
+
 export function createAudioEngine(): AudioEngine {
   let ctx: AudioContext | null = null;
-  let zOscillators: OscillatorNode[] | null = null;
-  let xOscillators: OscillatorNode[] | null = null;
-  let zGains: GainNode[] | null = null;
-  let xGains: GainNode[] | null = null;
   let masterGain: GainNode | null = null;
-  let zBus: GainNode | null = null;
-  let xBus: GainNode | null = null;
-  let zAnalyser: AnalyserNode | null = null;
-  let xAnalyser: AnalyserNode | null = null;
   let masterAnalyser: AnalyserNode | null = null;
 
   let reverbSend: GainNode | null = null;
@@ -117,21 +130,16 @@ export function createAudioEngine(): AudioEngine {
   let feedbackGain: GainNode | null = null;
   let reverbFilter: BiquadFilterNode | null = null;
 
+  const buses = new Map<string, ChannelBus>();
   let running = false;
-  let numOscillators = 8; // current 2^numQubits
 
   let params: AudioParams = {
-    zWaveform: "sine",
-    xWaveform: "triangle",
-    zVolume: 0.8,
-    xVolume: 0.5,
-    masterVolume: 0.5,
-    decay: 0.1,
-    reverb: 0.2,
     scale: "C major",
     rootOctave: 4,
-    xOctaveOffset: 1,
     numQubits: 3,
+    reverb: 0.2,
+    masterVolume: 0.5,
+    channels: [],
   };
 
   function ensureContext(): void {
@@ -141,22 +149,8 @@ export function createAudioEngine(): AudioEngine {
     masterGain = ctx.createGain();
     masterGain.gain.value = params.masterVolume;
 
-    zAnalyser = ctx.createAnalyser();
-    zAnalyser.fftSize = 2048;
-    xAnalyser = ctx.createAnalyser();
-    xAnalyser.fftSize = 2048;
     masterAnalyser = ctx.createAnalyser();
     masterAnalyser.fftSize = 2048;
-
-    zBus = ctx.createGain();
-    zBus.gain.value = params.zVolume;
-    xBus = ctx.createGain();
-    xBus.gain.value = params.xVolume;
-
-    zBus.connect(zAnalyser);
-    zBus.connect(masterGain);
-    xBus.connect(xAnalyser);
-    xBus.connect(masterGain);
 
     reverbSend = ctx.createGain();
     reverbSend.gain.value = params.reverb;
@@ -178,85 +172,147 @@ export function createAudioEngine(): AudioEngine {
     masterGain.connect(masterAnalyser);
     masterAnalyser.connect(ctx.destination);
 
-    buildOscillators();
+    // Build buses for any channels declared before the context existed
+    for (const cfg of params.channels) createBus(cfg);
   }
 
-  function buildOscillators(): void {
-    if (!ctx || !zBus || !xBus) return;
-    if (zOscillators) {
-      // Fade out old oscillators before stopping to avoid pops
+  function createBus(config: ChannelAudioConfig): ChannelBus {
+    if (!ctx || !masterGain) throw new Error("audio: context not initialized");
+    const bus = ctx.createGain();
+    bus.gain.value = config.muted ? 0 : config.volume;
+
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 2048;
+
+    bus.connect(analyser);
+    bus.connect(masterGain);
+
+    const channelBus: ChannelBus = {
+      config,
+      oscillators: [],
+      gains: [],
+      bus,
+      analyser,
+    };
+    buildChannelOscillators(channelBus);
+    buses.set(config.id, channelBus);
+    return channelBus;
+  }
+
+  function buildChannelOscillators(channelBus: ChannelBus): void {
+    if (!ctx) return;
+    // Fade out old oscillators before stopping to avoid pops
+    if (channelBus.oscillators.length > 0) {
       const t = ctx.currentTime;
-      const oldZGains = zGains!;
-      const oldXGains = xGains!;
-      const oldZOsc = zOscillators;
-      const oldXOsc = xOscillators!;
-      for (let i = 0; i < oldZGains.length; i++) {
-        oldZGains[i]!.gain.cancelScheduledValues(t);
-        oldZGains[i]!.gain.setValueAtTime(oldZGains[i]!.gain.value, t);
-        oldZGains[i]!.gain.linearRampToValueAtTime(0, t + 0.02);
-        oldXGains[i]!.gain.cancelScheduledValues(t);
-        oldXGains[i]!.gain.setValueAtTime(oldXGains[i]!.gain.value, t);
-        oldXGains[i]!.gain.linearRampToValueAtTime(0, t + 0.02);
+      const oldGains = channelBus.gains;
+      const oldOsc = channelBus.oscillators;
+      for (const g of oldGains) {
+        g.gain.cancelScheduledValues(t);
+        g.gain.setValueAtTime(g.gain.value, t);
+        g.gain.linearRampToValueAtTime(0, t + 0.02);
       }
       setTimeout(() => {
-        oldZOsc.forEach((o) => { try { o.stop(); } catch(e) {} });
-        oldXOsc.forEach((o) => { try { o.stop(); } catch(e) {} });
+        oldOsc.forEach((o) => { try { o.stop(); } catch(e) {} });
       }, 50);
     }
 
-    numOscillators = 1 << params.numQubits;
-    const zFreqs = getFreqs(params.scale, params.rootOctave, numOscillators);
-    const xFreqs = getFreqs(params.scale, params.rootOctave + params.xOctaveOffset, numOscillators);
+    const count = 1 << params.numQubits;
+    const freqs = getFreqs(
+      params.scale,
+      params.rootOctave + channelBus.config.octaveOffset,
+      count,
+    );
 
-    zOscillators = [];
-    xOscillators = [];
-    zGains = [];
-    xGains = [];
+    const oscillators: OscillatorNode[] = [];
+    const gains: GainNode[] = [];
 
-    for (let i = 0; i < numOscillators; i++) {
-      const zOsc = ctx.createOscillator();
-      const zGain = ctx.createGain();
-      zOsc.type = params.zWaveform;
-      zOsc.frequency.value = zFreqs[i]!;
-      zGain.gain.value = 0;
-      zOsc.connect(zGain);
-      zGain.connect(zBus);
-      zOsc.start();
-      zOscillators.push(zOsc);
-      zGains.push(zGain);
+    for (let i = 0; i < count; i++) {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = channelBus.config.waveform;
+      osc.frequency.value = freqs[i]!;
+      gain.gain.value = 0;
+      osc.connect(gain);
+      gain.connect(channelBus.bus);
+      osc.start();
+      oscillators.push(osc);
+      gains.push(gain);
+    }
+    channelBus.oscillators = oscillators;
+    channelBus.gains = gains;
+  }
 
-      const xOsc = ctx.createOscillator();
-      const xGain = ctx.createGain();
-      xOsc.type = params.xWaveform;
-      xOsc.frequency.value = xFreqs[i]!;
-      xGain.gain.value = 0;
-      xOsc.connect(xGain);
-      xGain.connect(xBus);
-      xOsc.start();
-      xOscillators.push(xOsc);
-      xGains.push(xGain);
+  function destroyBus(id: string): void {
+    const channelBus = buses.get(id);
+    if (!channelBus || !ctx) {
+      buses.delete(id);
+      return;
+    }
+    const t = ctx.currentTime;
+    for (const g of channelBus.gains) {
+      g.gain.cancelScheduledValues(t);
+      g.gain.setValueAtTime(g.gain.value, t);
+      g.gain.linearRampToValueAtTime(0, t + 0.02);
+    }
+    const oldOsc = channelBus.oscillators;
+    const bus = channelBus.bus;
+    const analyser = channelBus.analyser;
+    setTimeout(() => {
+      oldOsc.forEach((o) => { try { o.stop(); } catch(e) {} });
+      try { bus.disconnect(); } catch(e) {}
+      try { analyser.disconnect(); } catch(e) {}
+    }, 50);
+    buses.delete(id);
+  }
+
+  function reconcileChannels(
+    newChannels: ChannelAudioConfig[],
+    globalRebuild: boolean,
+  ): void {
+    if (!ctx) return; // ensureContext will pick these up later
+    const newIds = new Set(newChannels.map((c) => c.id));
+
+    // Remove channels that are no longer present
+    for (const id of [...buses.keys()]) {
+      if (!newIds.has(id)) destroyBus(id);
+    }
+
+    // Add or update channels
+    for (const cfg of newChannels) {
+      const existing = buses.get(cfg.id);
+      if (!existing) {
+        createBus(cfg);
+        continue;
+      }
+      const oscRebuild =
+        globalRebuild ||
+        existing.config.waveform !== cfg.waveform ||
+        existing.config.octaveOffset !== cfg.octaveOffset;
+
+      existing.config = cfg;
+      existing.bus.gain.value = cfg.muted ? 0 : cfg.volume;
+
+      if (oscRebuild) buildChannelOscillators(existing);
     }
   }
 
   function setParams(newParams: Partial<AudioParams>): void {
-    const needRebuild =
-      newParams.zWaveform !== params.zWaveform ||
-      newParams.xWaveform !== params.xWaveform ||
-      newParams.scale !== params.scale ||
-      newParams.rootOctave !== params.rootOctave ||
-      newParams.xOctaveOffset !== params.xOctaveOffset ||
-      newParams.numQubits !== params.numQubits;
+    const prev = params;
+    const next: AudioParams = { ...prev, ...newParams };
 
-    Object.assign(params, newParams);
+    const globalRebuild =
+      next.scale !== prev.scale ||
+      next.rootOctave !== prev.rootOctave ||
+      next.numQubits !== prev.numQubits;
 
-    if (!ctx) return;
+    params = next;
 
-    masterGain!.gain.value = params.masterVolume;
-    zBus!.gain.value = params.zVolume;
-    xBus!.gain.value = params.xVolume;
-    reverbSend!.gain.value = params.reverb;
+    if (ctx) {
+      if (masterGain) masterGain.gain.value = params.masterVolume;
+      if (reverbSend) reverbSend.gain.value = params.reverb;
+    }
 
-    if (needRebuild) buildOscillators();
+    reconcileChannels(params.channels, globalRebuild);
   }
 
   function start(): void {
@@ -267,53 +323,72 @@ export function createAudioEngine(): AudioEngine {
 
   function stop(): void {
     running = false;
-    if (!zGains) return;
-    const t = ctx!.currentTime;
-    for (let i = 0; i < zGains.length; i++) {
-      zGains[i]!.gain.cancelScheduledValues(t);
-      zGains[i]!.gain.setValueAtTime(zGains[i]!.gain.value, t);
-      zGains[i]!.gain.linearRampToValueAtTime(0, t + 0.05);
-      xGains![i]!.gain.cancelScheduledValues(t);
-      xGains![i]!.gain.setValueAtTime(xGains![i]!.gain.value, t);
-      xGains![i]!.gain.linearRampToValueAtTime(0, t + 0.05);
+    if (!ctx) return;
+    const t = ctx.currentTime;
+    for (const bus of buses.values()) {
+      for (const g of bus.gains) releaseGain(g.gain, bus.config.envelope.release, t);
     }
   }
 
-  function updateProbabilities(zBasis: ArrayLike<number>, xBasis: ArrayLike<number>): void {
-    if (!running || !zGains) return;
-    const t = ctx!.currentTime;
-    const count = Math.min(zBasis.length, zGains.length);
+  function releaseGain(gain: AudioParam, releaseTime: number, startTime: number): void {
+    const fadeTime = Math.max(0.01, releaseTime);
+    gain.cancelScheduledValues(startTime);
+    gain.setValueAtTime(gain.value, startTime);
+    gain.linearRampToValueAtTime(0, startTime + fadeTime);
+  }
 
-    const attack = 0.015; // 15ms ramp to avoid clicks
+  function applyEnvelope(gain: AudioParam, target: number, envelope: EnvelopeParams, startTime: number): void {
+    gain.cancelScheduledValues(startTime);
+    gain.setValueAtTime(gain.value, startTime);
 
-    for (let i = 0; i < count; i++) {
-      const zTarget = Math.sqrt(zBasis[i]!) * 0.4;
-      const xTarget = Math.sqrt(xBasis[i]!) * 0.4;
+    if (target <= 0.0001) {
+      releaseGain(gain, envelope.release, startTime);
+      return;
+    }
 
-      // Cancel pending automation and anchor current value
-      zGains[i]!.gain.cancelScheduledValues(t);
-      zGains[i]!.gain.setValueAtTime(zGains[i]!.gain.value, t);
-      xGains![i]!.gain.cancelScheduledValues(t);
-      xGains![i]!.gain.setValueAtTime(xGains![i]!.gain.value, t);
+    const attackTime = Math.max(0.001, envelope.attack);
+    const decayTime = Math.max(0, envelope.decay);
+    const releaseTime = Math.max(0, envelope.release);
+    const sustainTarget = Math.max(target * envelope.sustain, 0.0001);
+    const peakTime = startTime + attackTime;
+    const sustainTime = peakTime + decayTime;
 
-      // Ramp to target (never jump)
-      zGains[i]!.gain.linearRampToValueAtTime(zTarget, t + attack);
-      xGains![i]!.gain.linearRampToValueAtTime(xTarget, t + attack);
+    gain.linearRampToValueAtTime(target, peakTime);
+    gain.linearRampToValueAtTime(sustainTarget, sustainTime);
 
-      if (params.decay > 0) {
-        const decayTime = 0.05 + (1 - params.decay) * 2.0;
-        zGains[i]!.gain.exponentialRampToValueAtTime(Math.max(zTarget * 0.001, 0.0001), t + attack + decayTime);
-        xGains![i]!.gain.exponentialRampToValueAtTime(Math.max(xTarget * 0.001, 0.0001), t + attack + decayTime);
+    if (releaseTime > 0) {
+      gain.linearRampToValueAtTime(0, sustainTime + releaseTime);
+    }
+  }
+
+  function updateProbabilities(perChannel: Record<string, ArrayLike<number>>): void {
+    if (!running || !ctx) return;
+    const t = ctx.currentTime;
+    for (const id of Object.keys(perChannel)) {
+      const bus = buses.get(id);
+      if (!bus) continue;
+      const probs = perChannel[id];
+      if (!probs) continue;
+      const count = Math.min(probs.length, bus.gains.length);
+      for (let i = 0; i < count; i++) {
+        const p = probs[i] as number;
+        const target = Math.sqrt(p) * 0.4;
+        applyEnvelope(bus.gains[i]!.gain, target, bus.config.envelope, t);
       }
     }
   }
 
   function getAnalysers(): AudioAnalysers {
-    return { z: zAnalyser, x: xAnalyser, master: masterAnalyser };
+    const channels = new Map<string, AnalyserNode>();
+    for (const [id, bus] of buses.entries()) channels.set(id, bus.analyser);
+    return { channels, master: masterAnalyser };
   }
 
   function getParams(): AudioParams {
-    return { ...params };
+    return {
+      ...params,
+      channels: params.channels.map((c) => ({ ...c, envelope: { ...c.envelope } })),
+    };
   }
 
   return { start, stop, updateProbabilities, getAnalysers, setParams, getParams };
