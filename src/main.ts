@@ -1,5 +1,14 @@
 import { initQuantum, createQuantumEngine } from "./quantum.js";
-import type { Complex, MixedBranch, Measures } from "./quantum.js";
+import type {
+  ChannelDirection,
+  Complex,
+  EvaluationResult,
+  MixedBranch,
+} from "./quantum.js";
+
+// Subset of EvaluationResult that drawMeasures cares about. Lets the helper
+// accept either branch of the discriminated union without re-narrowing.
+type EvalLike = Pick<EvaluationResult, "channels" | "measures">;
 import { createAudioEngine, getNoteNames, getBasisLabels, getKets } from "./audio.js";
 import { createCircuitEditor } from "./circuit.js";
 import type { Circuit, Gate, GateKind } from "./circuit.js";
@@ -103,6 +112,23 @@ const PRESETS: Record<string, Circuit> = {
     ],
   },
 };
+
+// Sampling channels: Bloch directions per channel. For now hard-coded to the
+// pair the v0.3 UI exposed (Z and X). User-defined channels arrive in a later
+// step of the channels refactor.
+const CHANNELS: ChannelDirection[] = [
+  { id: "z", theta: 0, phi: 0 },             // +ẑ — computational basis
+  { id: "x", theta: Math.PI / 2, phi: 0 },   // +x̂ — Hadamard-rotated basis
+];
+
+// Adapter: pull the (Z, X) probability arrays out of the per-channel result
+// shape so the still-fixed-bus audio engine and viz keep working.
+function unpackZX(result: EvalLike): { zBasis: number[]; xBasis: number[] } {
+  return {
+    zBasis: result.channels[0]?.probabilities ?? [],
+    xBasis: result.channels[1]?.probabilities ?? [],
+  };
+}
 
 let playing = false;
 let playheadStep = 0;
@@ -261,15 +287,16 @@ async function main(): Promise<void> {
     editor.setPlayheadPosition(step);
 
     try {
-      const result = engine.evaluate(circuit, step);
-      audio.updateProbabilities(result.zBasis, result.xBasis);
-      drawViz(result.zBasis, result.xBasis, result.numQubits);
+      const result = engine.evaluate(circuit, step, CHANNELS);
+      const { zBasis, xBasis } = unpackZX(result);
+      audio.updateProbabilities(zBasis, xBasis);
+      drawViz(zBasis, xBasis, result.numQubits);
       if (result.isMixed) {
         drawMixedState(result.branches, result.numQubits);
       } else {
         drawStateVector(result.stateVector, result.numQubits);
       }
-      drawMeasures(result.measures);
+      drawMeasures(result);
     } catch (err) {
       console.error("Evaluation error:", err);
       const msg = err instanceof Error ? err.message : String(err);
@@ -667,8 +694,8 @@ async function main(): Promise<void> {
   const xCorrBar = byId<HTMLElement>("x-corr-bar");
   const xCorrVal = byId<HTMLElement>("x-corr-val");
 
-  function drawMeasures(measures: Measures | null | undefined) {
-    if (!measures) {
+  function drawMeasures(result: EvalLike | null | undefined) {
+    if (!result) {
       entBar.style.width = "0%";
       entVal.textContent = "0.00";
       zCorrBar.style.width = "0%";
@@ -677,9 +704,9 @@ async function main(): Promise<void> {
       xCorrVal.textContent = "0.00";
       return;
     }
-    const ent = Math.min(measures.entanglement, 1);
-    const zc = Math.min(measures.zCorrelation, 1);
-    const xc = Math.min(measures.xCorrelation, 1);
+    const ent = Math.min(result.measures.entanglement, 1);
+    const zc = Math.min(result.channels[0]?.correlation ?? 0, 1);
+    const xc = Math.min(result.channels[1]?.correlation ?? 0, 1);
     entBar.style.width = (ent * 100) + "%";
     entVal.textContent = ent.toFixed(2);
     zCorrBar.style.width = (zc * 100) + "%";
@@ -692,20 +719,22 @@ async function main(): Promise<void> {
   window.addEventListener("resize", () => {
     // Re-evaluate to redraw at new sizes
     const circuit = editor.getCircuit();
-    const result = engine.evaluate(circuit, -1);
-    drawViz(result.zBasis, result.xBasis, result.numQubits);
+    const result = engine.evaluate(circuit, -1, CHANNELS);
+    const { zBasis, xBasis } = unpackZX(result);
+    drawViz(zBasis, xBasis, result.numQubits);
     drawWaveforms();
   });
 
   // Initial draws — evaluate the empty circuit at step -1 (just |0...0⟩)
-  const initial = engine.evaluate(editor.getCircuit(), -1);
-  drawViz(initial.zBasis, initial.xBasis, initial.numQubits);
+  const initial = engine.evaluate(editor.getCircuit(), -1, CHANNELS);
+  const initialZX = unpackZX(initial);
+  drawViz(initialZX.zBasis, initialZX.xBasis, initial.numQubits);
   if (initial.isMixed) {
     drawMixedState(initial.branches, initial.numQubits);
   } else {
     drawStateVector(initial.stateVector, initial.numQubits);
   }
-  drawMeasures(initial.measures);
+  drawMeasures(initial);
   drawWaveforms();
 }
 
