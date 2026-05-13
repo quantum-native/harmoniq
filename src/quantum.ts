@@ -17,18 +17,36 @@ export interface Complex {
   im: number;
 }
 
-/** Aggregate measures derived from a single evaluation. */
+/**
+ * A sampling channel: a Bloch vector applied to every qubit before measurement.
+ * `theta = 0` is +ẑ (the computational/Z basis); `theta = π/2, phi = 0` is +x̂
+ * (the X basis); arbitrary `(theta, phi)` tilts the measurement basis.
+ */
+export interface ChannelDirection {
+  id: string;
+  /** Polar angle from +z. 0 → +z, π/2 → equator, π → -z. */
+  theta: number;
+  /** Azimuth around z. 0 → +x, π/2 → +y, π → -x. */
+  phi: number;
+}
+
+/** Per-channel sampling result. */
+export interface ChannelResult {
+  id: string;
+  probabilities: number[];
+  /** Mean pairwise normalised mutual information of outcomes in this basis. */
+  correlation: number;
+}
+
+/** Channel-agnostic aggregate measures. */
 export interface Measures {
   entanglement: number;
-  zCorrelation: number;
-  xCorrelation: number;
 }
 
 /** A single mixed-state branch produced by measurement gates. */
 export interface MixedBranch {
   weight: number;
-  zBasis: number[];
-  xBasis: number[];
+  channels: ChannelResult[];
   sv: Complex[];
 }
 
@@ -39,16 +57,14 @@ export interface MixedBranch {
  */
 export type EvaluationResult =
   | {
-      zBasis: number[];
-      xBasis: number[];
+      channels: ChannelResult[];
       stateVector: Complex[];
       numQubits: number;
       measures: Measures;
       isMixed: false;
     }
   | {
-      zBasis: number[];
-      xBasis: number[];
+      channels: ChannelResult[];
       stateVector: null;
       numQubits: number;
       measures: Measures;
@@ -58,8 +74,12 @@ export type EvaluationResult =
 
 /** Public surface of the stateful quantum engine. */
 export interface QuantumEngine {
-  /** Evaluate the circuit up to (and including) `upToStep`. */
-  evaluate(circuit: Circuit, upToStep: number): EvaluationResult;
+  /** Evaluate the circuit up to (and including) `upToStep`, sampling in the given channels. */
+  evaluate(
+    circuit: Circuit,
+    upToStep: number,
+    channels: ChannelDirection[],
+  ): EvaluationResult;
   /** Mark the cached state stale (call when the circuit is edited). */
   invalidate(): void;
 }
@@ -76,10 +96,9 @@ interface ForcedOutcome {
 }
 
 // Internal per-branch result before mixing.
-interface BranchResult {
+interface BranchInternal {
   weight: number;
-  zBasis: number[];
-  xBasis: number[];
+  channels: ChannelResult[];
   sv: Complex[];
 }
 
@@ -104,7 +123,6 @@ export function createQuantumEngine(): QuantumEngine {
 
   /** Reset all properties to |0⟩ via measure + release + re-acquire. */
   function resetProperties(n: number): void {
-    // Release existing properties back to pool
     if (qubits.length > 0) {
       const values = m.measure_properties(qubits);
       for (let i = 0; i < qubits.length; i++) {
@@ -115,7 +133,6 @@ export function createQuantumEngine(): QuantumEngine {
       }
     }
 
-    // Acquire the right number of fresh |0⟩ properties
     qubits = [];
     numQubits = n;
     for (let i = 0; i < n; i++) {
@@ -129,23 +146,21 @@ export function createQuantumEngine(): QuantumEngine {
     circuitVersion++;
   }
 
-  /**
-   * Evaluate the circuit up to the given step.
-   * Advances incrementally on forward steps; resets on backward/loop/edit.
-   */
-  function evaluate(circuit: Circuit, upToStep: number): EvaluationResult {
+  function evaluate(
+    circuit: Circuit,
+    upToStep: number,
+    channels: ChannelDirection[],
+  ): EvaluationResult {
     const n = circuit.numQubits || 3;
 
-    // Mixed-state path: measurement gates require branching
     const measGates = circuit.gates
       .filter((g) => g.type === "M" && g.step <= upToStep)
       .sort((a, b) => a.step - b.step || a.qubit - b.qubit);
 
     if (measGates.length > 0) {
-      return evaluateMixed(circuit, upToStep, n, measGates);
+      return evaluateMixed(circuit, upToStep, n, measGates, channels);
     }
-
-    return evaluatePureCached(circuit, upToStep, n);
+    return evaluatePureCached(circuit, upToStep, n, channels);
   }
 
   let lastCircuitVersion = -1;
@@ -154,8 +169,8 @@ export function createQuantumEngine(): QuantumEngine {
     circuit: Circuit,
     upToStep: number,
     n: number,
+    channels: ChannelDirection[],
   ): EvaluationResult {
-    // Check if we can advance incrementally
     const needsReset =
       n !== numQubits ||
       lastCircuitVersion !== circuitVersion ||
@@ -166,32 +181,31 @@ export function createQuantumEngine(): QuantumEngine {
       lastCircuitVersion = circuitVersion;
     }
 
-    // Apply gates from (cachedStep + 1) to upToStep
     for (let step = cachedStep + 1; step <= upToStep && step < circuit.steps; step++) {
       const stepGates = circuit.gates.filter((g) => g.step === step && g.type !== "M");
       applyStep(m, qubits, stepGates);
     }
     cachedStep = upToStep;
 
-    return readState(m, qubits, n);
+    return readState(m, qubits, n, channels);
   }
 
   function readState(
     mod: QFModule,
     props: QuantumProperty[],
     n: number,
+    channels: ChannelDirection[],
   ): EvaluationResult {
-    const zRaw = mod.probabilities(props);
-    const zBasis = parseProbabilities(zRaw, n);
     const stateVector = extractStateVector(mod, props, n);
-
-    for (const q of props) mod.hadamard(q);
-    const xRaw = mod.probabilities(props);
-    const xBasis = parseProbabilities(xRaw, n);
-    for (const q of props) mod.inverse_hadamard(q);
-
-    const measures = computeMeasures(stateVector, zBasis, xBasis, n);
-    return { zBasis, xBasis, stateVector, numQubits: n, measures, isMixed: false };
+    const channelResults = channels.map((c) => sampleChannel(mod, props, n, c));
+    const measures: Measures = { entanglement: branchEntanglement(stateVector, n) };
+    return {
+      channels: channelResults,
+      stateVector,
+      numQubits: n,
+      measures,
+      isMixed: false,
+    };
   }
 
   // --- Mixed-state evaluation (measurement gates) ---
@@ -202,11 +216,13 @@ export function createQuantumEngine(): QuantumEngine {
     upToStep: number,
     n: number,
     measGates: Gate[],
+    channels: ChannelDirection[],
   ): EvaluationResult {
     const numStates = 1 << n;
     const numBranches = 1 << measGates.length;
-    const zBasis: number[] = new Array(numStates).fill(0);
-    const xBasis: number[] = new Array(numStates).fill(0);
+    const accumProbs: number[][] = channels.map(() =>
+      new Array<number>(numStates).fill(0),
+    );
     let totalEntanglement = 0;
     const branches: MixedBranch[] = [];
 
@@ -217,36 +233,44 @@ export function createQuantumEngine(): QuantumEngine {
         value: (combo >> (measGates.length - 1 - idx)) & 1,
       }));
 
-      const result = evaluateBranch(circuit, upToStep, n, forced);
+      const result = evaluateBranch(circuit, upToStep, n, forced, channels);
       if (!result) continue;
 
-      for (let i = 0; i < numStates; i++) {
-        const zi = result.zBasis[i] ?? 0;
-        const xi = result.xBasis[i] ?? 0;
-        zBasis[i] = (zBasis[i] ?? 0) + result.weight * zi;
-        xBasis[i] = (xBasis[i] ?? 0) + result.weight * xi;
+      for (let ci = 0; ci < channels.length; ci++) {
+        const probs = result.channels[ci]?.probabilities;
+        if (!probs) continue;
+        const acc = accumProbs[ci]!;
+        for (let i = 0; i < numStates; i++) {
+          acc[i] = (acc[i] ?? 0) + result.weight * (probs[i] ?? 0);
+        }
       }
 
       totalEntanglement += result.weight * branchEntanglement(result.sv, n);
-      branches.push(result);
+      branches.push({
+        weight: result.weight,
+        channels: result.channels,
+        sv: result.sv,
+      });
     }
 
     // Leave state reset for the next pure evaluation to pick up
     cachedStep = -1;
     lastCircuitVersion = -1;
 
-    const measures: Measures = {
-      entanglement: totalEntanglement,
-      zCorrelation: basisCorrelation(zBasis, n),
-      xCorrelation: basisCorrelation(xBasis, n),
-    };
+    const channelResults: ChannelResult[] = channels.map((c, ci) => {
+      const probs = accumProbs[ci]!;
+      return {
+        id: c.id,
+        probabilities: probs,
+        correlation: basisCorrelation(probs, n),
+      };
+    });
 
     return {
-      zBasis,
-      xBasis,
+      channels: channelResults,
       stateVector: null,
       numQubits: n,
-      measures,
+      measures: { entanglement: totalEntanglement },
       isMixed: true,
       branches,
     };
@@ -257,10 +281,9 @@ export function createQuantumEngine(): QuantumEngine {
     upToStep: number,
     n: number,
     forcedOutcomes: ForcedOutcome[],
-  ): BranchResult | null {
+    channels: ChannelDirection[],
+  ): BranchInternal | null {
     const numStates = 1 << n;
-
-    // Reset properties for this branch
     resetProperties(n);
 
     let weight = 1.0;
@@ -293,19 +316,65 @@ export function createQuantumEngine(): QuantumEngine {
       }
     }
 
-    const zRaw = m.probabilities(qubits);
-    const zBasis = parseProbabilities(zRaw, n);
     const sv = extractStateVector(m, qubits, n);
-
-    for (const q of qubits) m.hadamard(q);
-    const xRaw = m.probabilities(qubits);
-    const xBasis = parseProbabilities(xRaw, n);
-    for (const q of qubits) m.inverse_hadamard(q);
-
-    return { weight, zBasis, xBasis, sv };
+    const channelResults = channels.map((c) => sampleChannel(m, qubits, n, c));
+    return { weight, channels: channelResults, sv };
   }
 
   return { evaluate, invalidate };
+}
+
+// --- Channel sampling (arbitrary basis via per-qubit Bloch rotation) ---
+
+/**
+ * Sample probabilities of measuring each n-qubit basis state in the basis
+ * defined by Bloch vector `n̂(theta, phi)` applied to every qubit. Rotates
+ * each qubit so `|+n̂⟩ → |0⟩`, reads Z-basis probabilities, then undoes the
+ * rotation so the state is unchanged.
+ */
+function sampleChannel(
+  m: QFModule,
+  qubits: QuantumProperty[],
+  n: number,
+  channel: ChannelDirection,
+): ChannelResult {
+  applyChannelRotation(m, qubits, channel, false);
+  const raw = m.probabilities(qubits);
+  const probabilities = parseProbabilities(raw, n);
+  applyChannelRotation(m, qubits, channel, true);
+  return {
+    id: channel.id,
+    probabilities,
+    correlation: basisCorrelation(probabilities, n),
+  };
+}
+
+/**
+ * Apply the per-qubit rotation that takes `|+n̂⟩ → |0⟩` (when `inverse=false`),
+ * or its inverse. Quantum-forge convention: `z(q, 1) = Z = R_z(π)` up to global
+ * phase, so a rotation by angle `α` is `fraction = α / π`.
+ *
+ * Forward: R_y(-θ) · R_z(-φ).  Inverse: R_z(+φ) · R_y(+θ).
+ */
+function applyChannelRotation(
+  m: QFModule,
+  qubits: QuantumProperty[],
+  channel: ChannelDirection,
+  inverse: boolean,
+): void {
+  const phiFrac = channel.phi / Math.PI;
+  const thetaFrac = channel.theta / Math.PI;
+  const skipPhi = Math.abs(phiFrac) < 1e-12;
+  const skipTheta = Math.abs(thetaFrac) < 1e-12;
+  if (skipPhi && skipTheta) return;
+
+  if (!inverse) {
+    if (!skipPhi) for (const q of qubits) m.z(q, -phiFrac);
+    if (!skipTheta) for (const q of qubits) m.y(q, -thetaFrac);
+  } else {
+    if (!skipTheta) for (const q of qubits) m.y(q, thetaFrac);
+    if (!skipPhi) for (const q of qubits) m.z(q, phiFrac);
+  }
 }
 
 // --- Gate application ---
@@ -455,20 +524,6 @@ function branchEntanglement(sv: Complex[], n: number): number {
     totalEntropy += s;
   }
   return totalEntropy / n;
-}
-
-function computeMeasures(
-  sv: Complex[],
-  zBasis: number[],
-  xBasis: number[],
-  n: number,
-): Measures {
-  if (n < 2) return { entanglement: 0, zCorrelation: 0, xCorrelation: 0 };
-  return {
-    entanglement: branchEntanglement(sv, n),
-    zCorrelation: basisCorrelation(zBasis, n),
-    xCorrelation: basisCorrelation(xBasis, n),
-  };
 }
 
 function basisCorrelation(probs: number[], n: number): number {
