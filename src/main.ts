@@ -222,6 +222,14 @@ async function main(): Promise<void> {
     blochCanvas: HTMLCanvasElement;
     bloch: BlochHUD;
     snapInput: HTMLInputElement;
+    thetaInput: HTMLInputElement;
+    thetaVal: HTMLElement;
+    thetaDec: HTMLButtonElement;
+    thetaInc: HTMLButtonElement;
+    phiInput: HTMLInputElement;
+    phiVal: HTMLElement;
+    phiDec: HTMLButtonElement;
+    phiInc: HTMLButtonElement;
     waveformSelect: HTMLSelectElement;
     octSelect: HTMLSelectElement;
     decayInput: HTMLInputElement;
@@ -230,6 +238,9 @@ async function main(): Promise<void> {
     volVal: HTMLElement;
     corrVal: HTMLElement;
   }
+
+  // Snap-step for both axes and for the ‹›  stepper buttons.
+  const SNAP_STEP = Math.PI / 8;
 
   function buildChannelCard(ch: Channel): ChannelCardEls {
     const root = document.createElement("div");
@@ -247,6 +258,24 @@ async function main(): Promise<void> {
       <div class="channel-basis">
         <canvas class="channel-bloch" width="180" height="180"></canvas>
         <label class="snap-toggle"><input type="checkbox" class="channel-snap"> Snap π/8</label>
+        <div class="basis-control">
+          <span class="basis-label">θ</span>
+          <div class="basis-stepper">
+            <button type="button" class="basis-step" data-dir="-1" data-axis="theta" aria-label="Decrease θ">‹</button>
+            <input type="range" class="channel-theta" min="0" max="${Math.PI.toFixed(6)}" step="0.01">
+            <button type="button" class="basis-step" data-dir="1" data-axis="theta" aria-label="Increase θ">›</button>
+          </div>
+          <span class="basis-val channel-theta-val">0</span>
+        </div>
+        <div class="basis-control">
+          <span class="basis-label">φ</span>
+          <div class="basis-stepper">
+            <button type="button" class="basis-step" data-dir="-1" data-axis="phi" aria-label="Decrease φ">‹</button>
+            <input type="range" class="channel-phi" min="0" max="${(2 * Math.PI).toFixed(6)}" step="0.01">
+            <button type="button" class="basis-step" data-dir="1" data-axis="phi" aria-label="Increase φ">›</button>
+          </div>
+          <span class="basis-val channel-phi-val">0</span>
+        </div>
       </div>
       <div class="channel-sound">
         <div class="channel-row">
@@ -292,10 +321,6 @@ async function main(): Promise<void> {
       color: ch.color,
       initialTheta: ch.theta,
       initialPhi: ch.phi,
-      isSnapping: () => channelsStore.get(ch.id)?.snap ?? false,
-      onChange: (t, p) => {
-        channelsStore.update(ch.id, { theta: t, phi: p });
-      },
     });
     const els: ChannelCardEls = {
       root,
@@ -305,6 +330,14 @@ async function main(): Promise<void> {
       blochCanvas,
       bloch,
       snapInput: find<HTMLInputElement>(".channel-snap"),
+      thetaInput: find<HTMLInputElement>(".channel-theta"),
+      thetaVal: find<HTMLElement>(".channel-theta-val"),
+      thetaDec: find<HTMLButtonElement>('.basis-step[data-axis="theta"][data-dir="-1"]'),
+      thetaInc: find<HTMLButtonElement>('.basis-step[data-axis="theta"][data-dir="1"]'),
+      phiInput: find<HTMLInputElement>(".channel-phi"),
+      phiVal: find<HTMLElement>(".channel-phi-val"),
+      phiDec: find<HTMLButtonElement>('.basis-step[data-axis="phi"][data-dir="-1"]'),
+      phiInc: find<HTMLButtonElement>('.basis-step[data-axis="phi"][data-dir="1"]'),
       waveformSelect: find<HTMLSelectElement>(".channel-wave"),
       octSelect: find<HTMLSelectElement>(".channel-oct"),
       decayInput: find<HTMLInputElement>(".channel-decay"),
@@ -317,6 +350,10 @@ async function main(): Promise<void> {
     // Seed initial UI state from channel
     els.nameInput.value = ch.name;
     els.snapInput.checked = ch.snap;
+    els.thetaInput.value = String(ch.theta);
+    els.phiInput.value = String(ch.phi);
+    els.thetaVal.textContent = formatPi(ch.theta);
+    els.phiVal.textContent = formatPi(ch.phi);
     els.waveformSelect.value = ch.waveform;
     els.octSelect.value = String(ch.octaveOffset);
     els.decayInput.value = String(ch.decay);
@@ -349,8 +386,37 @@ async function main(): Promise<void> {
       channelsStore.remove(id);
     });
     els.snapInput.addEventListener("change", () => {
-      channelsStore.update(id, { snap: els.snapInput.checked });
+      const snap = els.snapInput.checked;
+      const current = channelsStore.get(id);
+      if (!current) return;
+      // Quantise current θ/φ on toggling snap on, so the slider thumb visibly
+      // jumps to the nearest π/8 step instead of waiting for the next nudge.
+      if (snap) {
+        channelsStore.update(id, {
+          snap,
+          theta: clampTheta(snapTo(current.theta)),
+          phi: wrapPhi(snapTo(current.phi)),
+        });
+      } else {
+        channelsStore.update(id, { snap });
+      }
     });
+    els.thetaInput.addEventListener("input", () => {
+      const snap = channelsStore.get(id)?.snap ?? false;
+      const raw = parseFloat(els.thetaInput.value);
+      const v = clampTheta(snap ? snapTo(raw) : raw);
+      channelsStore.update(id, { theta: v });
+    });
+    els.phiInput.addEventListener("input", () => {
+      const snap = channelsStore.get(id)?.snap ?? false;
+      const raw = parseFloat(els.phiInput.value);
+      const v = wrapPhi(snap ? snapTo(raw) : raw);
+      channelsStore.update(id, { phi: v });
+    });
+    els.thetaDec.addEventListener("click", () => stepBasis(id, "theta", -1));
+    els.thetaInc.addEventListener("click", () => stepBasis(id, "theta", +1));
+    els.phiDec.addEventListener("click", () => stepBasis(id, "phi", -1));
+    els.phiInc.addEventListener("click", () => stepBasis(id, "phi", +1));
     els.waveformSelect.addEventListener("change", () => {
       channelsStore.update(id, {
         waveform: els.waveformSelect.value as OscillatorType,
@@ -371,6 +437,45 @@ async function main(): Promise<void> {
     });
   }
 
+  /** Nudge θ or φ by ±π/8, snapping the result onto the π/8 grid. */
+  function stepBasis(id: string, axis: "theta" | "phi", dir: 1 | -1) {
+    const current = channelsStore.get(id);
+    if (!current) return;
+    const base = axis === "theta" ? current.theta : current.phi;
+    // Snap to grid first so off-grid starting values still land cleanly.
+    const next = snapTo(base) + dir * SNAP_STEP;
+    if (axis === "theta") {
+      channelsStore.update(id, { theta: clampTheta(next) });
+    } else {
+      channelsStore.update(id, { phi: wrapPhi(next) });
+    }
+  }
+
+  /** Mirror a channel's basis state into the card's HUD, slider, and readout. */
+  function syncCardBasis(card: ChannelCardEls, ch: Channel) {
+    card.bloch.setVector(ch.theta, ch.phi);
+    // setting .value to current value is a no-op and won't disturb an active drag
+    card.thetaInput.value = String(ch.theta);
+    card.phiInput.value = String(ch.phi);
+    card.thetaVal.textContent = formatPi(ch.theta);
+    card.phiVal.textContent = formatPi(ch.phi);
+  }
+
+  function snapTo(v: number): number {
+    return Math.round(v / SNAP_STEP) * SNAP_STEP;
+  }
+  function clampTheta(t: number): number {
+    return Math.max(0, Math.min(Math.PI, t));
+  }
+  function wrapPhi(p: number): number {
+    let v = p % (2 * Math.PI);
+    if (v < 0) v += 2 * Math.PI;
+    return v;
+  }
+  function formatPi(rad: number): string {
+    if (Math.abs(rad) < 1e-9) return "0";
+    return (rad / Math.PI).toFixed(2) + "π";
+  }
   function formatPercent(v: number): string {
     if (v <= 0) return "0%";
     return Math.round(v * 100) + "%";
@@ -401,9 +506,16 @@ async function main(): Promise<void> {
   syncChannelsToAudio();
   // Any change (add/remove or per-channel field) re-pushes audio config and
   // re-evaluates so the viz and sound reflect the new channels immediately.
+  // Also mirror current basis state back to each card so the HUD, slider, and
+  // readout stay in sync when basis is changed from outside the slider input
+  // (e.g. snap toggle quantising, or future preset loaders).
   channelsStore.subscribeAny(() => {
     syncChannelsToAudio();
     updateState();
+    for (const ch of channelsStore.list()) {
+      const card = cardEls.get(ch.id);
+      if (card) syncCardBasis(card, ch);
+    }
   });
 
   // Transport
