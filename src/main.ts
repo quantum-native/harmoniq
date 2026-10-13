@@ -707,6 +707,20 @@ async function main(): Promise<void> {
   }
   drawMeasures(initial.measures);
   drawWaveforms();
+
+  // Sutradhar's dev desk, in its frame on the dev server only (src/dev/sutraDesk.ts).
+  if (import.meta.env.DEV && "__SUTRA_DESK__" in window && window.parent === window.top && window.parent !== window) {
+    import("./dev/sutraDesk.js")
+      .then((desk) =>
+        desk.mountSutraDesk({
+          circuit: () => editor.getCircuit(),
+          presets: PRESETS,
+          transport: () => ({ playing, step: playheadStep, stepsPerSecond: parseFloat(speedSlider.value) }),
+          sound: () => audio.getParams(),
+        }),
+      )
+      .catch((err: unknown) => console.warn("[desk] the desk adapter did not load", err));
+  }
 }
 
 main();
