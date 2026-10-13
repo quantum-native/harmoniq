@@ -108,7 +108,7 @@ export function mountSutraDesk(deps: DeskDeps): void {
     desk.hold(custom ? "a hand-built circuit is on screen, and a reload clears it" : null);
   };
   const later = () => setTimeout(syncHold, 0);
-  for (const type of ["click", "pointerup", "drop", "keyup", "change"]) {
+  for (const type of ["click", "pointerup", "contextmenu", "drop", "keyup", "change"]) {
     document.addEventListener(type, later, true);
   }
   syncHold();
